@@ -923,6 +923,93 @@
   $('detail-search').addEventListener('input', renderDetailMessages);
   $('detail-status').addEventListener('change', renderDetailMessages);
 
+  $('detail-requeue-btn')?.addEventListener('click', async () => {
+    const feedback = $('detail-requeue-feedback');
+    const fromStatuses = [...document.querySelectorAll('.detail-requeue-status:checked')].map(
+      (el) => el.value
+    );
+    if (!detailCampaignId) {
+      if (feedback) {
+        feedback.className = 'text-sm text-danger';
+        feedback.textContent = 'No campaign selected';
+      }
+      return;
+    }
+    if (!fromStatuses.length) {
+      if (feedback) {
+        feedback.className = 'text-sm text-danger';
+        feedback.textContent = 'Select at least one status';
+      }
+      return;
+    }
+    const ok = await appConfirm(
+      `Reset all messages with status [${fromStatuses.join(', ')}] back to QUEUED for this campaign?`,
+      'Bulk requeue',
+      { danger: true }
+    );
+    if (!ok) return;
+    try {
+      const data = await api('/api/admin/messages/requeue', {
+        method: 'POST',
+        body: JSON.stringify({
+          campaignId: detailCampaignId,
+          fromStatuses,
+        }),
+      });
+      if (feedback) {
+        feedback.className = 'text-sm text-ok';
+        feedback.textContent = `Requeued ${data.updated} message(s)`;
+      }
+      await loadCampaignDetail();
+      loadOverview();
+    } catch (err) {
+      if (feedback) {
+        feedback.className = 'text-sm text-danger';
+        feedback.textContent = err.message || 'Requeue failed';
+      }
+    }
+  });
+
+  $('monitor-requeue-btn')?.addEventListener('click', async () => {
+    const feedback = $('monitor-requeue-feedback');
+    const status = ($('filter-status')?.value || '').trim();
+    const campaignIdFilter = ($('filter-campaign')?.value || '').trim();
+    if (!status || status === 'QUEUED') {
+      if (feedback) {
+        feedback.className = 'text-sm text-danger';
+        feedback.textContent = 'Pick a non-Queued status filter first';
+      }
+      return;
+    }
+    const ok = await appConfirm(
+      `Reset all company messages with status ${status}${
+        campaignIdFilter ? ` in campaign ${campaignIdFilter}` : ''
+      } back to QUEUED?`,
+      'Bulk requeue',
+      { danger: true }
+    );
+    if (!ok) return;
+    try {
+      const body = { fromStatuses: [status] };
+      if (campaignIdFilter) body.campaignId = campaignIdFilter;
+      const data = await api('/api/admin/messages/requeue', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      if (feedback) {
+        feedback.className = 'text-sm text-ok';
+        feedback.textContent = `Requeued ${data.updated} message(s)`;
+      }
+      loadMessages();
+      loadOverview();
+    } catch (err) {
+      if (feedback) {
+        feedback.className = 'text-sm text-danger';
+        feedback.textContent = err.message || 'Requeue failed';
+      }
+    }
+  });
+
   $('campaigns-tbody').addEventListener('click', (e) => {
     const row = e.target.closest('[data-open-campaign]');
     if (!row) return;

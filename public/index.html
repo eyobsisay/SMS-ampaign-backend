@@ -230,6 +230,24 @@
           </div>
         </div>
 
+        <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel p-4 space-y-3">
+          <div>
+            <h3 class="font-display font-semibold text-base">Bulk requeue to Queued</h3>
+            <p class="text-sm text-slate-500">Select one or more statuses to reset for this campaign. Those messages will be pulled again by the gateway.</p>
+          </div>
+          <div class="flex flex-wrap gap-3 text-sm">
+            <label class="inline-flex items-center gap-2"><input type="checkbox" class="detail-requeue-status rounded border-slate-300" value="PROCESSING" /> Processing</label>
+            <label class="inline-flex items-center gap-2"><input type="checkbox" class="detail-requeue-status rounded border-slate-300" value="SENT" /> Sent</label>
+            <label class="inline-flex items-center gap-2"><input type="checkbox" class="detail-requeue-status rounded border-slate-300" value="DELIVERED" /> Delivered</label>
+            <label class="inline-flex items-center gap-2"><input type="checkbox" class="detail-requeue-status rounded border-slate-300" value="SEND_FAILED" checked /> Send Failed</label>
+            <label class="inline-flex items-center gap-2"><input type="checkbox" class="detail-requeue-status rounded border-slate-300" value="DELIVERY_FAILED" checked /> Delivery Failed</label>
+          </div>
+          <div class="flex flex-wrap items-center gap-3">
+            <button type="button" id="detail-requeue-btn" class="rounded-lg bg-amber-600 text-white text-sm font-medium px-4 py-2 hover:bg-amber-700">Requeue selected statuses</button>
+            <p id="detail-requeue-feedback" class="text-sm text-slate-500"></p>
+          </div>
+        </div>
+
         <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel overflow-hidden">
           <div class="px-5 py-4 border-b border-slate-100">
             <h3 class="font-display font-semibold text-lg">Phone number statuses</h3>
@@ -451,11 +469,13 @@
           </div>
           <button id="apply-filters" class="rounded-lg bg-ink-900 text-white text-sm font-medium px-4 py-2 hover:bg-ink-800">Apply</button>
           <button id="refresh-monitor" class="rounded-lg border border-slate-200 text-sm font-medium px-4 py-2 hover:bg-slate-50">Refresh</button>
+          <button id="monitor-requeue-btn" class="rounded-lg bg-amber-600 text-white text-sm font-medium px-4 py-2 hover:bg-amber-700">Requeue filter → Queued</button>
+          <p id="monitor-requeue-feedback" class="text-sm text-slate-500 w-full md:w-auto"></p>
         </div>
         <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel overflow-hidden">
           <div class="px-5 py-4 border-b border-slate-100">
             <h2 class="font-display font-semibold text-lg">Live Message Monitor</h2>
-            <p class="text-sm text-slate-500">Auto-refreshes every 5 seconds · company data only</p>
+            <p class="text-sm text-slate-500">Auto-refreshes every 5 seconds · company data only · Requeue uses Status + Campaign ID filters (Status required)</p>
           </div>
           <div class="table-wrap">
             <table class="w-full text-sm">
@@ -710,7 +730,7 @@
   </div>
 
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-  <script src="/js/app.js?v=settings-batch-1"></script>
+  <script src="/js/app.js?v=requeue-bulk-1"></script>
 </body>
 </html>
 

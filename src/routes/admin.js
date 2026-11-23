@@ -21,6 +21,8 @@ const {
   updateCompanySettings,
   MAX_JOB_BATCH_SIZE,
   DEFAULT_JOB_BATCH_SIZE,
+  requeueMessages,
+  VALID_STATUSES,
 } = require('../db/database');
 const { campaignId } = require('../utils/ids');
 
@@ -290,6 +292,51 @@ router.get('/messages', (req, res) => {
   } catch (err) {
     console.error('messages error:', err);
     return res.status(500).json({ success: false, error: 'Failed to list messages' });
+  }
+});
+
+/**
+ * POST /api/admin/messages/requeue
+ * Bulk set selected messages back to QUEUED (gateway can pull again).
+ * Body: {
+ *   campaignId?: string,
+ *   fromStatuses?: string[],   // e.g. ["PROCESSING","SEND_FAILED"]
+ *   messageIds?: string[]     // optional specific ids
+ * }
+ */
+router.post('/messages/requeue', (req, res) => {
+  try {
+    const { campaignId: campaignIdFilter, fromStatuses, messageIds } = req.body || {};
+
+    if (Array.isArray(fromStatuses)) {
+      for (const s of fromStatuses) {
+        const n = String(s || '').toUpperCase().trim();
+        if (n && n !== 'QUEUED' && !VALID_STATUSES.has(n)) {
+          return res.status(400).json({
+            success: false,
+            error: `Invalid status in fromStatuses: ${s}`,
+          });
+        }
+      }
+    }
+
+    const result = requeueMessages({
+      companyId: req.company.id,
+      campaignId: campaignIdFilter || undefined,
+      fromStatuses,
+      messageIds,
+    });
+
+    return res.json({
+      success: true,
+      updated: result.updated,
+      fromStatuses: result.fromStatuses,
+      campaignId: result.campaignId,
+    });
+  } catch (err) {
+    const status = /fromStatuses|messageIds/i.test(err.message) ? 400 : 500;
+    if (status === 500) console.error('requeue error:', err);
+    return res.status(status).json({ success: false, error: err.message || 'Failed to requeue' });
   }
 });
 

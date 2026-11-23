@@ -882,6 +882,74 @@ function batchUpdateStatuses(companyIdValue, events) {
   });
 }
 
+/**
+ * Bulk reset messages back to QUEUED so gateways can pull them again.
+ * Options (at least one of fromStatuses / messageIds required):
+ * - campaignId: optional scope
+ * - fromStatuses: statuses to reverse (e.g. PROCESSING, SEND_FAILED)
+ * - messageIds: specific job ids
+ */
+function requeueMessages({
+  companyId: companyIdValue,
+  campaignId: campaignIdValue,
+  fromStatuses,
+  messageIds,
+} = {}) {
+  const ids = Array.isArray(messageIds)
+    ? [...new Set(messageIds.map((id) => String(id || '').trim()).filter(Boolean))]
+    : [];
+
+  let statuses = [];
+  if (Array.isArray(fromStatuses)) {
+    statuses = [
+      ...new Set(
+        fromStatuses
+          .map((s) => normalizeStatus(s))
+          .filter((s) => s && s !== 'QUEUED')
+      ),
+    ];
+  }
+
+  if (ids.length === 0 && statuses.length === 0) {
+    throw new Error('Provide fromStatuses and/or messageIds');
+  }
+
+  const now = new Date().toISOString();
+  const params = [now, companyIdValue];
+  const where = [`companyId = ?`, `status != 'QUEUED'`];
+
+  if (campaignIdValue) {
+    where.push('campaignId = ?');
+    params.push(String(campaignIdValue).trim());
+  }
+
+  if (ids.length > 0) {
+    where.push(`id IN (${ids.map(() => '?').join(',')})`);
+    params.push(...ids);
+  }
+
+  if (statuses.length > 0) {
+    where.push(`status IN (${statuses.map(() => '?').join(',')})`);
+    params.push(...statuses);
+  }
+
+  const sql = `
+    UPDATE MessageJob
+    SET status = 'QUEUED',
+        failureReason = NULL,
+        updatedAt = ?
+    WHERE ${where.join(' AND ')}
+  `;
+
+  const result = db.prepare(sql).run(...params);
+  return {
+    updated: result.changes || 0,
+    fromStatuses: statuses,
+    campaignId: campaignIdValue || null,
+    messageIdCount: ids.length,
+  };
+}
+
 function createCampaign({ companyId: companyIdValue, id, title, messageBody, phones, recipientNames = [] }) {
   const insertCampaign = db.prepare(
     `INSERT INTO Campaign (id, companyId, title, messageBody, totalMessages) VALUES (?, ?, ?, ?, ?)`
@@ -978,6 +1046,7 @@ module.exports = {
   pullJobs,
   updateMessageStatus,
   batchUpdateStatuses,
+  requeueMessages,
   createCampaign,
   listCampaigns,
   listMessages,
