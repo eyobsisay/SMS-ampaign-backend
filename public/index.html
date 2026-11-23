@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SMS Campaign Portal</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            ink: { 950: '#0b1220', 900: '#111827', 800: '#1f2937', 700: '#374151' },
+            accent: { DEFAULT: '#0d9488', soft: '#ccfbf1', dark: '#0f766e' },
+            warn: '#d97706',
+            danger: '#dc2626',
+            ok: '#16a34a',
+          },
+          fontFamily: {
+            sans: ['"DM Sans"', 'system-ui', 'sans-serif'],
+            display: ['"Outfit"', 'system-ui', 'sans-serif'],
+          },
+          boxShadow: {
+            panel: '0 1px 2px rgba(15,23,42,.06), 0 8px 24px rgba(15,23,42,.06)',
+          },
+        },
+      },
+    };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Outfit:wght@500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    body {
+      background:
+        radial-gradient(1200px 600px at 10% -10%, rgba(13,148,136,.12), transparent 55%),
+        radial-gradient(900px 500px at 100% 0%, rgba(15,23,42,.06), transparent 50%),
+        #f8fafc;
+    }
+    .nav-btn.active { background: #0d9488; color: white; }
+    .mode-tab.active { background: #0f172a; color: white; }
+    .group-add-mode.active { background: #0f172a; color: white; }
+    .status-pill {
+      display: inline-flex; align-items: center; gap: .35rem; border-radius: 999px;
+      padding: .2rem .65rem; font-size: .72rem; font-weight: 600;
+      letter-spacing: .02em; text-transform: uppercase;
+    }
+    .dot { width: .45rem; height: .45rem; border-radius: 999px; background: currentColor; }
+    .table-wrap { max-height: 520px; overflow: auto; }
+    .pulse-online { animation: pulse-dot 1.6s ease-in-out infinite; }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: .45; transform: scale(.85); }
+    }
+    .token-box { word-break: break-all; font-family: ui-monospace, monospace; font-size: .75rem; }
+  </style>
+</head>
+<body class="font-sans text-ink-900 antialiased min-h-screen">
+  <!-- Auth gate -->
+  <div id="auth-screen" class="min-h-screen flex items-center justify-center p-4">
+    <div class="w-full max-w-md bg-white rounded-2xl shadow-panel border border-slate-200/80 p-8">
+      <div class="mb-6">
+        <p class="font-display text-2xl font-bold tracking-tight text-ink-950">SMS Campaign Portal</p>
+        <p class="mt-2 text-sm text-slate-500">Sign in with username and password. Each company has isolated data.</p>
+      </div>
+
+      <form id="login-form" class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1.5" for="login-username">Username</label>
+          <input id="login-username" name="username" autocomplete="username" required
+            class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+            placeholder="username" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1.5" for="login-password">Password</label>
+          <div class="relative">
+            <input id="login-password" name="password" type="password" autocomplete="current-password" required
+              class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 pr-16 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+              placeholder="••••••••" />
+            <button type="button" data-toggle-password="login-password" class="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-medium text-slate-500 hover:text-ink-900 px-2 py-1">Show</button>
+          </div>
+        </div>
+        <p id="auth-hint" class="text-xs text-slate-400">Company users and Master Admin use the same login form.</p>
+        <p id="auth-error" class="hidden text-sm text-danger"></p>
+        <button id="auth-submit" type="submit"
+          class="w-full rounded-xl bg-accent hover:bg-accent-dark text-white font-semibold py-2.5 transition">
+          Sign In
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Company app -->
+  <div id="app" class="hidden">
+    <header class="sticky top-0 z-30 border-b border-slate-200/80 bg-white/80 backdrop-blur-md">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 class="font-display text-xl font-bold tracking-tight text-ink-950">SMS Campaign Portal</h1>
+          <p class="text-xs text-slate-500">
+            Company: <span id="company-name" class="font-semibold text-ink-800">—</span>
+            · Signed in as <span id="signed-in-user" class="font-semibold text-ink-800">—</span>
+          </p>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 px-2.5 py-1 rounded-full bg-slate-100">
+            <span class="dot pulse-online text-ok"></span> Live
+          </span>
+          <button id="logout-btn" class="text-xs font-medium text-slate-600 hover:text-ink-900 px-3 py-1.5 rounded-lg hover:bg-slate-100">Lock</button>
+        </div>
+      </div>
+      <nav class="max-w-7xl mx-auto px-4 sm:px-6 pb-3 flex flex-wrap gap-2">
+        <button data-view="overview" class="nav-btn active px-3.5 py-1.5 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition">Overview</button>
+        <button data-view="groups" class="nav-btn px-3.5 py-1.5 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition">Contact Groups</button>
+        <button data-view="create" class="nav-btn px-3.5 py-1.5 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition">Create Campaign</button>
+        <button data-view="monitor" class="nav-btn px-3.5 py-1.5 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition">Live Monitor</button>
+        <button data-view="gateways" class="nav-btn px-3.5 py-1.5 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition">Gateways</button>
+        <button data-view="users" class="nav-btn px-3.5 py-1.5 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition">Users</button>
+        <button data-view="settings" class="nav-btn px-3.5 py-1.5 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition">Settings</button>
+      </nav>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+      <section id="view-overview" class="view space-y-6">
+        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+          <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel p-4">
+            <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Campaigns</p>
+            <p id="stat-campaigns" class="mt-1 font-display text-2xl font-bold">0</p>
+          </div>
+          <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel p-4">
+            <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Queued</p>
+            <p id="stat-queued" class="mt-1 font-display text-2xl font-bold text-amber-600">0</p>
+          </div>
+          <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel p-4">
+            <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Processing</p>
+            <p id="stat-processing" class="mt-1 font-display text-2xl font-bold text-sky-600">0</p>
+          </div>
+          <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel p-4">
+            <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Sent</p>
+            <p id="stat-sent" class="mt-1 font-display text-2xl font-bold text-teal-600">0</p>
+          </div>
+          <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel p-4">
+            <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Delivered</p>
+            <p id="stat-delivered" class="mt-1 font-display text-2xl font-bold text-ok">0</p>
+          </div>
+          <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel p-4">
+            <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Failed</p>
+            <p id="stat-failed" class="mt-1 font-display text-2xl font-bold text-danger">0</p>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel overflow-hidden">
+          <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+            <div>
+              <h2 class="font-display font-semibold text-lg">Recent Campaigns</h2>
+              <p class="text-sm text-slate-500">Click a campaign or <span class="font-medium text-accent">View status</span> to see each phone number</p>
+            </div>
+            <button id="refresh-overview" class="text-sm font-medium text-accent hover:text-accent-dark">Refresh</button>
+          </div>
+          <div class="table-wrap">
+            <table class="w-full text-sm">
+              <thead class="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 sticky top-0">
+                <tr>
+                  <th class="px-5 py-3 font-medium">Title</th>
+                  <th class="px-5 py-3 font-medium">Total</th>
+                  <th class="px-5 py-3 font-medium">Queued</th>
+                  <th class="px-5 py-3 font-medium">Sent</th>
+                  <th class="px-5 py-3 font-medium">Delivered</th>
+                  <th class="px-5 py-3 font-medium">Failed</th>
+                  <th class="px-5 py-3 font-medium">Created</th>
+                  <th class="px-5 py-3 font-medium"></th>
+                </tr>
+              </thead>
+              <tbody id="campaigns-tbody" class="divide-y divide-slate-100"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Campaign detail: phone-by-phone status -->
+      <section id="view-campaign-detail" class="view hidden space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <button type="button" id="back-to-overview" class="text-sm font-medium text-accent hover:text-accent-dark mb-1">← Back to Overview</button>
+            <h2 class="font-display font-semibold text-xl" id="detail-campaign-title">Campaign</h2>
+            <p class="text-sm text-slate-500 font-mono" id="detail-campaign-id"></p>
+          </div>
+          <button type="button" id="refresh-campaign-detail" class="text-sm font-medium text-accent hover:text-accent-dark">Refresh</button>
+        </div>
+
+        <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel p-4">
+            <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Total</p>
+            <p id="detail-stat-total" class="mt-1 font-display text-2xl font-bold">0</p>
+          </div>
+          <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel p-4">
+            <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Queued</p>
+            <p id="detail-stat-queued" class="mt-1 font-display text-2xl font-bold text-amber-600">0</p>
+          </div>
+          <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel p-4">
+            <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Sent</p>
+            <p id="detail-stat-sent" class="mt-1 font-display text-2xl font-bold text-teal-600">0</p>
+          </div>
+          <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel p-4">
+            <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Delivered</p>
+            <p id="detail-stat-delivered" class="mt-1 font-display text-2xl font-bold text-ok">0</p>
+          </div>
+          <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel p-4">
+            <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Failed</p>
+            <p id="detail-stat-failed" class="mt-1 font-display text-2xl font-bold text-danger">0</p>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel p-4 flex flex-wrap gap-3 items-end">
+          <div class="flex-1 min-w-[180px]">
+            <label class="block text-xs font-medium text-slate-500 mb-1" for="detail-search">Search</label>
+            <input id="detail-search" type="search" placeholder="Name or phone…"
+              class="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-accent" />
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-500 mb-1" for="detail-status">Status</label>
+            <select id="detail-status" class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-accent">
+              <option value="">All</option>
+              <option value="QUEUED">Queued</option>
+              <option value="PROCESSING">Processing</option>
+              <option value="SENT">Sent</option>
+              <option value="DELIVERED">Delivered</option>
+              <option value="SEND_FAILED">Send Failed</option>
+              <option value="DELIVERY_FAILED">Delivery Failed</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel overflow-hidden">
+          <div class="px-5 py-4 border-b border-slate-100">
+            <h3 class="font-display font-semibold text-lg">Phone number statuses</h3>
+            <p class="text-sm text-slate-500">Showing <span id="detail-showing" class="font-semibold text-ink-800">0</span> recipients</p>
+          </div>
+          <div class="table-wrap">
+            <table class="w-full text-sm">
+              <thead class="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 sticky top-0">
+                <tr>
+                  <th class="px-4 py-3 font-medium">Name</th>
+                  <th class="px-4 py-3 font-medium">Phone</th>
+                  <th class="px-4 py-3 font-medium">Status</th>
+                  <th class="px-4 py-3 font-medium">SIM</th>
+                  <th class="px-4 py-3 font-medium">Updated</th>
+                  <th class="px-4 py-3 font-medium">Failure reason</th>
+                </tr>
+              </thead>
+              <tbody id="detail-messages-tbody" class="divide-y divide-slate-100"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Contact Groups -->
+      <section id="view-groups" class="view hidden space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 class="font-display font-semibold text-xl">Contact Groups</h2>
+            <p class="text-sm text-slate-500">Create a group, then import Excel or add contacts manually</p>
+          </div>
+          <button type="button" id="show-create-group" class="rounded-xl bg-ink-900 hover:bg-ink-800 text-white text-sm font-semibold px-4 py-2.5">
+            Create Group
+          </button>
+        </div>
+
+        <!-- Create group panel -->
+        <div id="create-group-panel" class="hidden bg-white rounded-2xl border border-slate-200/80 shadow-panel p-6 max-w-3xl space-y-5">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <h3 class="font-display font-semibold text-lg">New Contact Group</h3>
+              <p class="text-sm text-slate-500">Add contacts now via Excel import or manual entry (optional).</p>
+            </div>
+            <button type="button" id="hide-create-group" class="text-sm font-medium text-slate-500 hover:text-ink-900">Cancel</button>
+          </div>
+
+          <div class="grid sm:grid-cols-2 gap-3">
+            <div>
+              <label class="block text-sm font-medium mb-1.5" for="new-group-name">Group Name</label>
+              <input id="new-group-name" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20" placeholder="e.g. group" />
+              <p class="mt-1 text-xs text-slate-400">If split: becomes <span class="font-mono">group_1</span>, <span class="font-mono">group_2</span>, …</p>
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-1.5" for="split-size">Split amount (members per group)</label>
+              <input id="split-size" type="number" min="1" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20" placeholder="Full (no split)" />
+              <p class="mt-1 text-xs text-slate-400">Leave empty = one full group. Example: <span class="font-medium">500</span> → chunks of 500.</p>
+            </div>
+          </div>
+
+          <div>
+            <p class="text-sm font-medium mb-2">Add contacts</p>
+            <div class="flex gap-2 mb-3">
+              <button type="button" data-group-add-mode="excel" class="group-add-mode active rounded-lg px-3 py-1.5 text-sm font-medium bg-slate-100">Import Excel / CSV</button>
+              <button type="button" data-group-add-mode="manual" class="group-add-mode rounded-lg px-3 py-1.5 text-sm font-medium bg-slate-100">Add Manually</button>
+              <button type="button" data-group-add-mode="skip" class="group-add-mode rounded-lg px-3 py-1.5 text-sm font-medium bg-slate-100">Empty for now</button>
+            </div>
+
+            <div id="create-mode-excel" class="space-y-2">
+              <input id="create-group-excel" type="file" accept=".xlsx,.xls,.csv" class="hidden" />
+              <button type="button" id="create-group-excel-btn" class="rounded-lg border border-slate-200 bg-white text-sm font-medium px-3 py-2 hover:bg-slate-50">
+                Choose Excel / CSV file
+              </button>
+              <p id="create-excel-status" class="text-xs text-slate-500">Columns: Name + Phone. File is applied when you create the group.</p>
+            </div>
+
+            <div id="create-mode-manual" class="hidden space-y-2">
+              <label class="block text-sm font-medium" for="create-manual-contacts">Name + phone (one per line)</label>
+              <textarea id="create-manual-contacts" rows="6" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm font-mono outline-none focus:border-accent focus:ring-2 focus:ring-accent/20" placeholder="Abebe:+251911223344&#10;Sara:+251922334455&#10;or just +251911223344"></textarea>
+              <p class="text-xs text-slate-400">Format: <span class="font-medium">Name:phone</span> or phone only. Detected: <span id="create-manual-count" class="font-semibold text-ink-800">0</span></p>
+            </div>
+
+            <div id="create-mode-skip" class="hidden">
+              <p class="text-sm text-slate-500">Group will be created empty. You can import or add contacts after.</p>
+            </div>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-3">
+            <button type="button" id="create-group-btn" class="rounded-xl bg-ink-900 hover:bg-ink-800 text-white text-sm font-semibold px-5 py-2.5">Create Group</button>
+            <p id="group-create-feedback" class="text-sm"></p>
+          </div>
+        </div>
+
+        <div class="grid lg:grid-cols-2 gap-4">
+          <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel overflow-hidden">
+            <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h2 class="font-display font-semibold text-lg">Groups</h2>
+                <p class="text-sm text-slate-500">Select a group to manage contacts</p>
+              </div>
+              <button id="refresh-groups" class="text-sm font-medium text-accent hover:text-accent-dark">Refresh</button>
+            </div>
+            <div class="table-wrap">
+              <table class="w-full text-sm">
+                <thead class="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 sticky top-0">
+                  <tr>
+                    <th class="px-4 py-3 font-medium">Group</th>
+                    <th class="px-4 py-3 font-medium">Contacts</th>
+                    <th class="px-4 py-3 font-medium">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="groups-tbody" class="divide-y divide-slate-100"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel overflow-hidden">
+            <div class="px-5 py-4 border-b border-slate-100 space-y-3">
+              <div>
+                <h2 class="font-display font-semibold text-lg">Group Contacts</h2>
+                <p class="text-sm text-slate-500" id="selected-group-label">Select a group to view / add contacts</p>
+              </div>
+              <div class="flex flex-wrap gap-2 items-center">
+                <input id="group-excel-import" type="file" accept=".xlsx,.xls,.csv" class="hidden" />
+                <button type="button" id="group-excel-btn" disabled
+                  class="rounded-lg border border-slate-200 bg-white text-sm font-medium px-3 py-1.5 hover:bg-slate-50 disabled:opacity-40">
+                  Import Excel / CSV
+                </button>
+                <button type="button" id="clear-group-contacts-btn" disabled
+                  class="rounded-lg border border-red-200 text-danger text-sm font-medium px-3 py-1.5 hover:bg-red-50 disabled:opacity-40">
+                  Delete all contacts
+                </button>
+                <span id="group-import-feedback" class="text-sm self-center"></span>
+              </div>
+              <div id="manual-add-row" class="hidden grid sm:grid-cols-[1fr_1fr_auto] gap-2">
+                <div>
+                  <label class="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1" for="manual-name">Full Name</label>
+                  <input id="manual-name" class="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-accent" placeholder="Abebe" />
+                </div>
+                <div>
+                  <label class="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1" for="manual-phone">Phone</label>
+                  <input id="manual-phone" class="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-accent" placeholder="+2519..." />
+                </div>
+                <div class="flex items-end">
+                  <button type="button" id="manual-add-btn" class="w-full rounded-lg bg-accent hover:bg-accent-dark text-white text-sm font-semibold px-3 py-2">Add</button>
+                </div>
+              </div>
+              <div id="contact-search-wrap" class="hidden">
+                <label class="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1" for="contact-search">Search contacts</label>
+                <input id="contact-search" type="search" autocomplete="off"
+                  class="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+                  placeholder="Search by name or phone…" />
+                <p class="mt-1 text-xs text-slate-400">Showing <span id="contact-search-count" class="font-semibold text-ink-800">0</span> of <span id="contact-total-count" class="font-semibold text-ink-800">0</span></p>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="w-full text-sm">
+                <thead class="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 sticky top-0">
+                  <tr>
+                    <th class="px-4 py-3 font-medium">Name</th>
+                    <th class="px-4 py-3 font-medium">Phone</th>
+                    <th class="px-4 py-3 font-medium"></th>
+                  </tr>
+                </thead>
+                <tbody id="contacts-tbody" class="divide-y divide-slate-100">
+                  <tr><td colspan="3" class="px-4 py-8 text-center text-slate-400">No group selected</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-create" class="view hidden">
+        <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel p-6 max-w-3xl">
+          <h2 class="font-display font-semibold text-xl">Create & Queue Campaign</h2>
+          <p class="mt-1 text-sm text-slate-500">Pick a contact group, then queue the message to everyone in it.</p>
+          <form id="campaign-form" class="mt-6 space-y-5">
+            <div>
+              <label class="block text-sm font-medium mb-1.5" for="camp-title">Campaign Title</label>
+              <input id="camp-title" required class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20" placeholder="e.g. March Promo Blast" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-1.5" for="camp-group">Contact Group</label>
+              <select id="camp-group" required
+                class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20">
+                <option value="">Select a group…</option>
+              </select>
+              <p class="mt-1 text-xs text-slate-400">Contacts in group: <span id="camp-group-count" class="font-semibold text-ink-800">0</span>. Manage groups under <span class="font-medium">Contact Groups</span>.</p>
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-1.5" for="camp-body">Message Template / Body</label>
+              <textarea id="camp-body" required rows="5" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 resize-y" placeholder="Hello! Your order is ready for pickup."></textarea>
+              <p class="mt-1 text-xs text-slate-400"><span id="body-count">0</span> characters</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-3">
+              <button type="submit" id="create-btn" class="rounded-xl bg-accent hover:bg-accent-dark text-white font-semibold px-5 py-2.5 transition disabled:opacity-50">Create & Queue Campaign</button>
+              <p id="create-feedback" class="text-sm"></p>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <section id="view-monitor" class="view hidden space-y-4">
+        <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel p-4 flex flex-wrap gap-3 items-end">
+          <div>
+            <label class="block text-xs font-medium text-slate-500 mb-1" for="filter-status">Status</label>
+            <select id="filter-status" class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-accent">
+              <option value="">All</option>
+              <option value="QUEUED">Queued</option>
+              <option value="PROCESSING">Processing</option>
+              <option value="SENT">Sent</option>
+              <option value="DELIVERED">Delivered</option>
+              <option value="SEND_FAILED">Send Failed</option>
+              <option value="DELIVERY_FAILED">Delivery Failed</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-500 mb-1" for="filter-campaign">Campaign ID</label>
+            <input id="filter-campaign" type="text" placeholder="Optional" class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-accent w-48" />
+          </div>
+          <button id="apply-filters" class="rounded-lg bg-ink-900 text-white text-sm font-medium px-4 py-2 hover:bg-ink-800">Apply</button>
+          <button id="refresh-monitor" class="rounded-lg border border-slate-200 text-sm font-medium px-4 py-2 hover:bg-slate-50">Refresh</button>
+        </div>
+        <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel overflow-hidden">
+          <div class="px-5 py-4 border-b border-slate-100">
+            <h2 class="font-display font-semibold text-lg">Live Message Monitor</h2>
+            <p class="text-sm text-slate-500">Auto-refreshes every 5 seconds · company data only</p>
+          </div>
+          <div class="table-wrap">
+            <table class="w-full text-sm">
+              <thead class="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 sticky top-0">
+                <tr>
+                  <th class="px-4 py-3 font-medium">Name</th>
+                  <th class="px-4 py-3 font-medium">Phone</th>
+                  <th class="px-4 py-3 font-medium">Campaign</th>
+                  <th class="px-4 py-3 font-medium">Status</th>
+                  <th class="px-4 py-3 font-medium">SIM</th>
+                  <th class="px-4 py-3 font-medium">Updated</th>
+                  <th class="px-4 py-3 font-medium">Failure</th>
+                </tr>
+              </thead>
+              <tbody id="messages-tbody" class="divide-y divide-slate-100"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-gateways" class="view hidden">
+        <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel overflow-hidden">
+          <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+            <div>
+              <h2 class="font-display font-semibold text-lg">Connected Gateways</h2>
+              <p class="text-sm text-slate-500">Android devices registered with this company's token</p>
+            </div>
+            <button id="refresh-gateways" class="text-sm font-medium text-accent hover:text-accent-dark">Refresh</button>
+          </div>
+          <div class="table-wrap">
+            <table class="w-full text-sm">
+              <thead class="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 sticky top-0">
+                <tr>
+                  <th class="px-5 py-3 font-medium">Device</th>
+                  <th class="px-5 py-3 font-medium">Identifier</th>
+                  <th class="px-5 py-3 font-medium">Android / App</th>
+                  <th class="px-5 py-3 font-medium">Last Heartbeat</th>
+                  <th class="px-5 py-3 font-medium">State</th>
+                </tr>
+              </thead>
+              <tbody id="devices-tbody" class="divide-y divide-slate-100"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-users" class="view hidden space-y-4">
+        <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel p-5">
+          <h2 class="font-display font-semibold text-lg">Android Gateway Token</h2>
+          <p class="mt-1 text-sm text-slate-500">Put this token in the Android app (Bearer). Dashboard uses username/password; the app uses this token.</p>
+          <p id="company-api-token" class="token-box mt-3 rounded-xl bg-slate-50 border border-slate-200 p-3 text-ink-900">—</p>
+        </div>
+        <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel overflow-hidden">
+          <div class="px-5 py-4 border-b border-slate-100">
+            <h2 class="font-display font-semibold text-lg">Company Users</h2>
+            <p class="text-sm text-slate-500">All users for this company (dictionary keyed by user id)</p>
+          </div>
+          <div class="table-wrap">
+            <table class="w-full text-sm">
+              <thead class="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 sticky top-0">
+                <tr>
+                  <th class="px-5 py-3 font-medium">Name</th>
+                  <th class="px-5 py-3 font-medium">Username</th>
+                  <th class="px-5 py-3 font-medium">Email</th>
+                  <th class="px-5 py-3 font-medium">Role</th>
+                  <th class="px-5 py-3 font-medium">User ID</th>
+                </tr>
+              </thead>
+              <tbody id="users-tbody" class="divide-y divide-slate-100"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-settings" class="view hidden space-y-4">
+        <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel p-5 max-w-xl">
+          <h2 class="font-display font-semibold text-lg">Gateway pull settings</h2>
+          <p class="mt-1 text-sm text-slate-500">
+            How many SMS jobs the Android gateway receives per
+            <code class="text-xs bg-slate-100 px-1.5 py-0.5 rounded">GET /api/gateway/jobs</code> request.
+          </p>
+          <form id="settings-form" class="mt-5 space-y-4">
+            <div>
+              <label class="block text-sm font-medium mb-1.5" for="setting-job-batch-size">Jobs per pull</label>
+              <input
+                id="setting-job-batch-size"
+                type="number"
+                min="1"
+                max="50"
+                step="1"
+                required
+                class="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/30 focus:border-teal-500"
+              />
+              <p class="mt-1.5 text-xs text-slate-500">Allowed range: 1–50. Default if unset: 10 (or <code>JOB_BATCH_SIZE</code> in .env).</p>
+            </div>
+            <div class="flex items-center gap-3">
+              <button type="submit" class="px-4 py-2.5 rounded-xl bg-teal-600 text-white text-sm font-medium hover:bg-teal-700 transition">
+                Save settings
+              </button>
+              <p id="settings-status" class="text-sm text-slate-500"></p>
+            </div>
+          </form>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Master admin app -->
+  <div id="master-app" class="hidden">
+    <header class="sticky top-0 z-30 border-b border-slate-200/80 bg-white/80 backdrop-blur-md">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 class="font-display text-xl font-bold tracking-tight text-ink-950">Master Admin</h1>
+          <p class="text-xs text-slate-500">Create companies and issue isolated API tokens</p>
+        </div>
+        <button id="master-logout-btn" class="text-xs font-medium text-slate-600 hover:text-ink-900 px-3 py-1.5 rounded-lg hover:bg-slate-100">Lock</button>
+      </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+      <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel overflow-hidden">
+        <div class="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 class="font-display font-semibold text-lg">All Companies</h2>
+            <p class="text-sm text-slate-500">Each has separate campaigns, jobs, devices, and users</p>
+          </div>
+          <div class="flex items-center gap-3">
+            <button id="refresh-companies" class="text-sm font-medium text-accent hover:text-accent-dark">Refresh</button>
+            <button id="show-create-company" type="button"
+              class="rounded-xl bg-ink-900 hover:bg-ink-800 text-white text-sm font-semibold px-4 py-2 transition">
+              Create Company
+            </button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="w-full text-sm">
+            <thead class="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 sticky top-0">
+              <tr>
+                <th class="px-5 py-3 font-medium">Company</th>
+                <th class="px-5 py-3 font-medium">Users</th>
+                <th class="px-5 py-3 font-medium">Campaigns</th>
+                <th class="px-5 py-3 font-medium">Devices</th>
+                <th class="px-5 py-3 font-medium">API Token</th>
+                <th class="px-5 py-3 font-medium">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="companies-tbody" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Create company panel -->
+      <div id="create-company-panel" class="hidden bg-white rounded-2xl border border-slate-200/80 shadow-panel p-6 max-w-3xl">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <h2 class="font-display font-semibold text-xl">Create Company</h2>
+            <p class="mt-1 text-sm text-slate-500">Every company needs at least one user profile.</p>
+          </div>
+          <button id="hide-create-company" type="button" class="text-sm font-medium text-slate-500 hover:text-ink-900">Cancel</button>
+        </div>
+        <form id="company-form" class="mt-5 space-y-4">
+          <div>
+            <label class="block text-sm font-medium mb-1.5" for="co-name">Company Name</label>
+            <input id="co-name" required class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20" placeholder="Company name" />
+          </div>
+          <div class="grid sm:grid-cols-2 gap-3">
+            <div>
+              <label class="block text-sm font-medium mb-1.5" for="u-name">Full Name</label>
+              <input id="u-name" required class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-1.5" for="u-email">Email</label>
+              <input id="u-email" type="email" required class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-1.5" for="u-username">Username (for login)</label>
+              <input id="u-username" required minlength="3" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-1.5" for="u-password">Password</label>
+              <div class="relative">
+                <input id="u-password" type="password" required minlength="6" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 pr-16 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20" placeholder="min 6 characters" />
+                <button type="button" data-toggle-password="u-password" class="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-medium text-slate-500 hover:text-ink-900 px-2 py-1">Show</button>
+              </div>
+            </div>
+            <div class="sm:col-span-2">
+              <label class="block text-sm font-medium mb-1.5" for="u-password-confirm">Confirm Password</label>
+              <div class="relative">
+                <input id="u-password-confirm" type="password" required minlength="6" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 pr-16 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20" placeholder="re-enter password" />
+                <button type="button" data-toggle-password="u-password-confirm" class="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-medium text-slate-500 hover:text-ink-900 px-2 py-1">Show</button>
+              </div>
+            </div>
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1.5" for="extra-users">Additional Users (optional)</label>
+            <textarea id="extra-users" rows="3" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm font-mono outline-none focus:border-accent focus:ring-2 focus:ring-accent/20" placeholder="name, email, username, password, role"></textarea>
+            <p class="mt-1 text-xs text-slate-400">One per line: name, email, username, password, role</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-3">
+            <button type="submit" class="rounded-xl bg-ink-900 hover:bg-ink-800 text-white font-semibold px-5 py-2.5 transition">Save Company</button>
+            <p id="company-feedback" class="text-sm"></p>
+          </div>
+          <div id="new-token-box" class="hidden rounded-xl bg-accent-soft border border-teal-200 p-4">
+            <p class="text-sm font-semibold text-accent-dark">Company API Token (give to Android app)</p>
+            <p id="new-token-value" class="token-box mt-2 text-ink-900"></p>
+          </div>
+        </form>
+      </div>
+
+      <!-- Edit company panel -->
+      <div id="edit-company-panel" class="hidden bg-white rounded-2xl border border-slate-200/80 shadow-panel p-6 max-w-4xl">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <h2 class="font-display font-semibold text-xl">Edit Company</h2>
+            <p class="mt-1 text-sm text-slate-500">Update name and users. Leave password blank to keep current.</p>
+          </div>
+          <button id="hide-edit-company" type="button" class="text-sm font-medium text-slate-500 hover:text-ink-900">Cancel</button>
+        </div>
+        <form id="edit-company-form" class="mt-5 space-y-4">
+          <input type="hidden" id="edit-co-id" />
+          <div>
+            <label class="block text-sm font-medium mb-1.5" for="edit-co-name">Company Name</label>
+            <input id="edit-co-name" required class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20" />
+          </div>
+          <div>
+            <div class="flex items-center justify-between mb-2">
+              <label class="block text-sm font-medium">Users</label>
+              <button type="button" id="add-edit-user" class="text-sm font-medium text-accent hover:text-accent-dark">+ Add user</button>
+            </div>
+            <div id="edit-users-list" class="space-y-3"></div>
+          </div>
+          <div class="flex flex-wrap items-center gap-3">
+            <button type="submit" class="rounded-xl bg-ink-900 hover:bg-ink-800 text-white font-semibold px-5 py-2.5 transition">Save Changes</button>
+            <p id="edit-company-feedback" class="text-sm"></p>
+          </div>
+        </form>
+      </div>
+    </main>
+  </div>
+
+  <!-- In-app dialog (replaces window.alert / window.confirm) -->
+  <div id="app-dialog" class="hidden fixed inset-0 z-[100] flex items-center justify-center p-4">
+    <div id="app-dialog-backdrop" class="absolute inset-0 bg-ink-950/40 backdrop-blur-[2px]"></div>
+    <div class="relative w-full max-w-md bg-white rounded-2xl shadow-panel border border-slate-200/80 p-6">
+      <h3 id="app-dialog-title" class="font-display font-semibold text-lg text-ink-950">Confirm</h3>
+      <p id="app-dialog-message" class="mt-2 text-sm text-slate-600 whitespace-pre-wrap"></p>
+      <div class="mt-6 flex flex-wrap justify-end gap-2">
+        <button type="button" id="app-dialog-cancel" class="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancel</button>
+        <button type="button" id="app-dialog-ok" class="rounded-xl bg-ink-900 hover:bg-ink-800 text-white px-4 py-2 text-sm font-semibold">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script src="/js/app.js?v=settings-batch-1"></script>
+</body>
+</html>
+
+
