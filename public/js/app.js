@@ -245,7 +245,10 @@
     stopPolling();
     refreshTimer = setInterval(() => {
       if (currentView === 'overview') loadOverview();
-      if (currentView === 'campaign-detail') loadCampaignDetail();
+      if (currentView === 'campaigns') {
+        loadCampaigns();
+        if (detailCampaignId) loadCampaignDetail();
+      }
       if (currentView === 'groups') loadGroups();
       if (currentView === 'monitor') loadMessages();
       if (currentView === 'gateways') loadDevices();
@@ -259,7 +262,19 @@
     refreshTimer = null;
   }
 
+  const PAGE_TITLES = {
+    overview: 'Overview',
+    campaigns: 'Campaigns',
+    create: 'New Campaign',
+    groups: 'Contact Groups',
+    monitor: 'Live Monitor',
+    gateways: 'Gateways',
+    users: 'Users',
+    settings: 'Settings',
+  };
+
   function switchView(name) {
+    if (name === 'campaign-detail') name = 'campaigns';
     currentView = name;
     document.querySelectorAll('#app .view').forEach((el) => el.classList.add('hidden'));
     document.querySelectorAll('#app .nav-btn').forEach((btn) => {
@@ -267,12 +282,20 @@
     });
     const view = $(`view-${name}`);
     if (view) view.classList.remove('hidden');
+    if ($('page-title')) $('page-title').textContent = PAGE_TITLES[name] || 'Dashboard';
     loadView(name);
   }
 
   function loadView(name) {
     if (name === 'overview') loadOverview();
-    if (name === 'campaign-detail') loadCampaignDetail();
+    if (name === 'campaigns') {
+      loadCampaigns();
+      if (detailCampaignId) {
+        const panel = $('campaign-detail-panel');
+        if (panel) panel.classList.remove('hidden');
+        loadCampaignDetail();
+      }
+    }
     if (name === 'groups') loadGroups();
     if (name === 'create') loadCampaignGroups();
     if (name === 'monitor') loadMessages();
@@ -657,6 +680,13 @@
       .join('');
   }
 
+  function campaignStatusBadge(status) {
+    const active = String(status || 'ACTIVE').toUpperCase() === 'ACTIVE';
+    return active
+      ? '<span class="status-pill bg-emerald-50 text-emerald-700"><span class="dot"></span>Active</span>'
+      : '<span class="status-pill bg-slate-100 text-slate-600"><span class="dot"></span>Inactive</span>';
+  }
+
   async function openCampaignDetail(campaign) {
     detailCampaignId = campaign.id;
     detailCampaignMeta = campaign;
@@ -664,13 +694,22 @@
     $('detail-campaign-id').textContent = campaign.id;
     $('detail-stat-total').textContent = campaign.totalMessages ?? 0;
     $('detail-stat-queued').textContent = campaign.queued ?? 0;
+    if ($('detail-stat-processing')) $('detail-stat-processing').textContent = campaign.processing ?? 0;
     $('detail-stat-sent').textContent = campaign.sent ?? 0;
     $('detail-stat-delivered').textContent = campaign.delivered ?? 0;
     $('detail-stat-failed').textContent = campaign.failed ?? 0;
     $('detail-search').value = '';
     $('detail-status').value = '';
-    switchView('campaign-detail');
-    await loadCampaignDetail();
+    const panel = $('campaign-detail-panel');
+    if (panel) panel.classList.remove('hidden');
+    if (currentView !== 'campaigns') switchView('campaigns');
+    else {
+      document.querySelectorAll('#campaigns-tbody tr.campaign-row').forEach((row) => {
+        row.classList.toggle('selected', row.dataset.campaignId === campaign.id);
+      });
+      await loadCampaignDetail();
+    }
+    panel?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   async function loadCampaignDetail() {
@@ -684,15 +723,17 @@
       detailMessagesCache = data.messages || [];
 
       // Recompute live counts from messages
-      const counts = { queued: 0, sent: 0, delivered: 0, failed: 0 };
+      const counts = { queued: 0, processing: 0, sent: 0, delivered: 0, failed: 0 };
       for (const m of detailMessagesCache) {
-        if (m.status === 'QUEUED' || m.status === 'PROCESSING') counts.queued += 1;
+        if (m.status === 'QUEUED') counts.queued += 1;
+        else if (m.status === 'PROCESSING') counts.processing += 1;
         else if (m.status === 'SENT') counts.sent += 1;
         else if (m.status === 'DELIVERED') counts.delivered += 1;
         else if (m.status === 'SEND_FAILED' || m.status === 'DELIVERY_FAILED') counts.failed += 1;
       }
       $('detail-stat-total').textContent = String(detailMessagesCache.length);
       $('detail-stat-queued').textContent = String(counts.queued);
+      if ($('detail-stat-processing')) $('detail-stat-processing').textContent = String(counts.processing);
       $('detail-stat-sent').textContent = String(counts.sent);
       $('detail-stat-delivered').textContent = String(counts.delivered);
       $('detail-stat-failed').textContent = String(counts.failed);
@@ -705,10 +746,7 @@
 
   async function loadOverview() {
     try {
-      const [statsRes, campsRes] = await Promise.all([
-        api('/api/admin/stats'),
-        api('/api/admin/campaigns'),
-      ]);
+      const statsRes = await api('/api/admin/stats');
       const s = statsRes.stats;
       $('stat-campaigns').textContent = s.totalCampaigns;
       $('stat-queued').textContent = s.totalQueued;
@@ -716,35 +754,51 @@
       $('stat-sent').textContent = s.totalSent;
       $('stat-delivered').textContent = s.totalDelivered;
       $('stat-failed').textContent = s.totalFailed;
+    } catch (err) {
+      console.error(err);
+    }
+  }
 
+  async function loadCampaigns() {
+    try {
+      const campsRes = await api('/api/admin/campaigns');
       const tbody = $('campaigns-tbody');
+      if (!tbody) return;
       cachedCampaigns = {};
       for (const c of campsRes.campaigns) cachedCampaigns[c.id] = c;
 
       if (!campsRes.campaigns.length) {
         tbody.innerHTML =
-          '<tr><td colspan="8" class="px-5 py-8 text-center text-slate-400">No campaigns yet for this company.</td></tr>';
+          '<tr><td colspan="10" class="px-5 py-8 text-center text-slate-400">No campaigns yet for this company.</td></tr>';
         return;
       }
       tbody.innerHTML = campsRes.campaigns
-        .map(
-          (c) => `
-        <tr class="hover:bg-teal-50/50 cursor-pointer" data-campaign-id="${escapeHtml(c.id)}" data-open-campaign="${escapeHtml(c.id)}" title="Click to view phone statuses">
-          <td class="px-5 py-3">
+        .map((c) => {
+          const status = String(c.status || 'ACTIVE').toUpperCase();
+          const isActive = status === 'ACTIVE';
+          const selected = detailCampaignId === c.id ? 'selected' : '';
+          return `
+        <tr class="campaign-row hover:bg-teal-50/50 cursor-pointer ${selected}" data-campaign-id="${escapeHtml(c.id)}" data-open-campaign="${escapeHtml(c.id)}" title="Click to view phone statuses">
+          <td class="px-4 py-3">
             <div class="font-medium text-ink-900">${escapeHtml(c.title)}</div>
             <div class="text-xs text-slate-400 font-mono">${escapeHtml(c.id)}</div>
           </td>
-          <td class="px-5 py-3">${c.totalMessages}</td>
-          <td class="px-5 py-3 text-amber-600 font-medium">${c.queued}</td>
-          <td class="px-5 py-3 text-teal-600 font-medium">${c.sent}</td>
-          <td class="px-5 py-3 text-emerald-600 font-medium">${c.delivered}</td>
-          <td class="px-5 py-3 text-red-600 font-medium">${c.failed}</td>
-          <td class="px-5 py-3 text-slate-500 whitespace-nowrap">${formatTime(c.createdAt)}</td>
-          <td class="px-5 py-3 whitespace-nowrap">
-            <span class="inline-flex rounded-lg bg-accent text-white text-xs font-semibold px-3 py-1.5">View status</span>
+          <td class="px-4 py-3">${campaignStatusBadge(status)}</td>
+          <td class="px-4 py-3">${c.totalMessages}</td>
+          <td class="px-4 py-3 text-amber-600 font-medium">${c.queued ?? 0}</td>
+          <td class="px-4 py-3 text-sky-600 font-medium">${c.processing ?? 0}</td>
+          <td class="px-4 py-3 text-teal-600 font-medium">${c.sent ?? 0}</td>
+          <td class="px-4 py-3 text-emerald-600 font-medium">${c.delivered ?? 0}</td>
+          <td class="px-4 py-3 text-red-600 font-medium">${c.failed ?? 0}</td>
+          <td class="px-4 py-3 text-slate-500 whitespace-nowrap">${formatTime(c.createdAt)}</td>
+          <td class="px-4 py-3 whitespace-nowrap" onclick="event.stopPropagation()">
+            <button type="button" data-toggle-campaign="${escapeHtml(c.id)}" data-next-status="${isActive ? 'INACTIVE' : 'ACTIVE'}"
+              class="rounded-lg border border-slate-200 text-xs font-semibold px-2.5 py-1.5 hover:bg-slate-50">
+              ${isActive ? 'Pause' : 'Activate'}
+            </button>
           </td>
-        </tr>`
-        )
+        </tr>`;
+        })
         .join('');
     } catch (err) {
       console.error(err);
@@ -922,9 +976,19 @@
     btn.addEventListener('click', () => switchView(btn.dataset.view));
   });
 
-  $('refresh-overview').addEventListener('click', loadOverview);
-  $('back-to-overview').addEventListener('click', () => switchView('overview'));
-  $('refresh-campaign-detail').addEventListener('click', loadCampaignDetail);
+  $('refresh-overview')?.addEventListener('click', () => {
+    loadCampaigns();
+    if (detailCampaignId) loadCampaignDetail();
+  });
+  $('refresh-campaign-detail')?.addEventListener('click', loadCampaignDetail);
+  document.querySelectorAll('.jump-campaigns').forEach((btn) => {
+    btn.addEventListener('click', () => switchView('campaigns'));
+  });
+  $('master-nav-companies')?.addEventListener('click', () => {
+    hideCreateCompany();
+    hideEditCompany();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
   $('detail-search').addEventListener('input', renderDetailMessages);
   $('detail-status').addEventListener('change', renderDetailMessages);
 
@@ -1015,7 +1079,26 @@
     }
   });
 
-  $('campaigns-tbody').addEventListener('click', (e) => {
+  $('campaigns-tbody')?.addEventListener('click', async (e) => {
+    const toggleBtn = e.target.closest('[data-toggle-campaign]');
+    if (toggleBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const id = toggleBtn.getAttribute('data-toggle-campaign');
+      const next = toggleBtn.getAttribute('data-next-status');
+      try {
+        await api(`/api/admin/campaigns/${id}/status`, {
+          method: 'PATCH',
+          body: JSON.stringify({ status: next }),
+        });
+        await loadCampaigns();
+        if (detailCampaignId === id) loadCampaignDetail();
+        loadOverview();
+      } catch (err) {
+        appAlert(err.message, 'Error');
+      }
+      return;
+    }
     const row = e.target.closest('[data-open-campaign]');
     if (!row) return;
     const id = row.getAttribute('data-open-campaign');
@@ -1300,14 +1383,16 @@
           title: $('camp-title').value.trim(),
           messageBody: bodyEl.value.trim(),
           groupId,
+          status: $('camp-status')?.value || 'ACTIVE',
         }),
       });
       feedback.className = 'text-sm text-ok';
-      feedback.textContent = `Queued ${data.campaign.totalMessages} jobs · ${data.campaign.id}`;
+      feedback.textContent = `Queued ${data.campaign.totalMessages} jobs · ${data.campaign.status || 'ACTIVE'} · ${data.campaign.id}`;
       $('campaign-form').reset();
+      if ($('camp-status')) $('camp-status').value = 'ACTIVE';
       $('body-count').textContent = '0';
       $('camp-group-count').textContent = '0';
-      switchView('overview');
+      switchView('campaigns');
     } catch (err) {
       feedback.className = 'text-sm text-danger';
       feedback.textContent = err.message;

@@ -2,6 +2,8 @@ const express = require('express');
 const {
   getOverviewStats,
   createCampaign,
+  setCampaignStatus,
+  normalizeCampaignStatus,
   listCampaigns,
   listMessages,
   listDevices,
@@ -214,7 +216,7 @@ router.get('/campaigns/:id', (req, res) => {
  */
 router.post('/campaigns', (req, res) => {
   try {
-    const { title, messageBody, phoneNumbers, recipients, groupId } = req.body || {};
+    const { title, messageBody, phoneNumbers, recipients, groupId, status } = req.body || {};
 
     if (!title || !String(title).trim()) {
       return res.status(400).json({ success: false, error: 'title is required' });
@@ -248,6 +250,7 @@ router.post('/campaigns', (req, res) => {
     }
 
     const id = campaignId();
+    const campaignStatus = normalizeCampaignStatus(status);
     const result = createCampaign({
       companyId: req.company.id,
       id,
@@ -255,6 +258,7 @@ router.post('/campaigns', (req, res) => {
       messageBody: String(messageBody).trim(),
       phones,
       recipientNames: names,
+      status: campaignStatus,
     });
 
     return res.status(201).json({
@@ -263,12 +267,29 @@ router.post('/campaigns', (req, res) => {
         id: result.id,
         title: String(title).trim(),
         totalMessages: result.totalMessages,
+        status: result.status,
         groupId: groupId || null,
       },
     });
   } catch (err) {
     console.error('create campaign error:', err);
     return res.status(500).json({ success: false, error: 'Failed to create campaign' });
+  }
+});
+
+/**
+ * PATCH /api/admin/campaigns/:id/status
+ * Body: { status: "ACTIVE" | "INACTIVE" }
+ * Inactive campaigns are not pulled by the Android gateway.
+ */
+router.patch('/campaigns/:id/status', (req, res) => {
+  try {
+    const status = normalizeCampaignStatus((req.body || {}).status);
+    const campaign = setCampaignStatus(req.company.id, req.params.id, status);
+    return res.json({ success: true, campaign });
+  } catch (err) {
+    const code = err.message === 'Campaign not found' ? 404 : 400;
+    return res.status(code).json({ success: false, error: err.message });
   }
 });
 

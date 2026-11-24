@@ -108,6 +108,7 @@ ensureColumn('MessageJob', 'companyId', 'TEXT');
 ensureColumn('User', 'username', 'TEXT');
 ensureColumn('User', 'passwordHash', 'TEXT');
 ensureColumn('Company', 'jobBatchSize', 'INTEGER');
+ensureColumn('Campaign', 'status', "TEXT NOT NULL DEFAULT 'ACTIVE'");
 
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_user_company ON User(companyId);
@@ -777,10 +778,13 @@ function pullJobs(companyIdValue, deviceIdentifier, limit) {
   touchHeartbeat(deviceIdentifier, companyIdValue);
 
   const select = db.prepare(
-    `SELECT id, campaignId, recipientName, phoneNumber, body, priority, scheduledTime, preferredSim
-     FROM MessageJob
-     WHERE status = 'QUEUED' AND companyId = ?
-     ORDER BY priority DESC, createdAt ASC
+    `SELECT m.id, m.campaignId, m.recipientName, m.phoneNumber, m.body, m.priority, m.scheduledTime, m.preferredSim
+     FROM MessageJob m
+     INNER JOIN Campaign c ON c.id = m.campaignId
+     WHERE m.status = 'QUEUED'
+       AND m.companyId = ?
+       AND UPPER(COALESCE(c.status, 'ACTIVE')) = 'ACTIVE'
+     ORDER BY m.priority DESC, m.createdAt ASC
      LIMIT ?`
   );
 
@@ -950,9 +954,24 @@ function requeueMessages({
   };
 }
 
-function createCampaign({ companyId: companyIdValue, id, title, messageBody, phones, recipientNames = [] }) {
+function normalizeCampaignStatus(status) {
+  const s = String(status || 'ACTIVE').toUpperCase().trim();
+  return s === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE';
+}
+
+function createCampaign({
+  companyId: companyIdValue,
+  id,
+  title,
+  messageBody,
+  phones,
+  recipientNames = [],
+  status = 'ACTIVE',
+}) {
+  const campaignStatus = normalizeCampaignStatus(status);
   const insertCampaign = db.prepare(
-    `INSERT INTO Campaign (id, companyId, title, messageBody, totalMessages) VALUES (?, ?, ?, ?, ?)`
+    `INSERT INTO Campaign (id, companyId, title, messageBody, totalMessages, status)
+     VALUES (?, ?, ?, ?, ?, ?)`
   );
   const insertJob = db.prepare(
     `INSERT INTO MessageJob (id, companyId, campaignId, recipientName, phoneNumber, body, priority, status)
@@ -960,20 +979,35 @@ function createCampaign({ companyId: companyIdValue, id, title, messageBody, pho
   );
 
   withTransaction(() => {
-    insertCampaign.run(id, companyIdValue, title, messageBody, phones.length);
+    insertCampaign.run(id, companyIdValue, title, messageBody, phones.length, campaignStatus);
     for (let i = 0; i < phones.length; i++) {
       insertJob.run(newId(), companyIdValue, id, recipientNames[i] || '', phones[i], messageBody);
     }
   });
 
-  return { id, totalMessages: phones.length };
+  return { id, totalMessages: phones.length, status: campaignStatus };
+}
+
+function setCampaignStatus(companyIdValue, campaignIdValue, status) {
+  const campaignStatus = normalizeCampaignStatus(status);
+  const result = db
+    .prepare(
+      `UPDATE Campaign SET status = ? WHERE id = ? AND companyId = ?`
+    )
+    .run(campaignStatus, campaignIdValue, companyIdValue);
+  if (!result.changes) {
+    throw new Error('Campaign not found');
+  }
+  return getCampaign(companyIdValue, campaignIdValue);
 }
 
 function listCampaigns(companyIdValue) {
   return db
     .prepare(
       `SELECT c.*,
+        COALESCE(c.status, 'ACTIVE') AS status,
         (SELECT COUNT(*) FROM MessageJob m WHERE m.campaignId = c.id AND m.status = 'QUEUED') AS queued,
+        (SELECT COUNT(*) FROM MessageJob m WHERE m.campaignId = c.id AND m.status = 'PROCESSING') AS processing,
         (SELECT COUNT(*) FROM MessageJob m WHERE m.campaignId = c.id AND m.status = 'SENT') AS sent,
         (SELECT COUNT(*) FROM MessageJob m WHERE m.campaignId = c.id AND m.status = 'DELIVERED') AS delivered,
         (SELECT COUNT(*) FROM MessageJob m WHERE m.campaignId = c.id AND m.status IN ('SEND_FAILED','DELIVERY_FAILED')) AS failed
@@ -1048,6 +1082,8 @@ module.exports = {
   batchUpdateStatuses,
   requeueMessages,
   createCampaign,
+  setCampaignStatus,
+  normalizeCampaignStatus,
   listCampaigns,
   listMessages,
   listDevices,

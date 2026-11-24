@@ -38,8 +38,13 @@
         #f8fafc;
     }
     .nav-btn.active { background: #0d9488; color: white; }
+    .sidebar-link.active { background: rgba(13,148,136,.18); color: #ccfbf1; }
+    .sidebar-link.active svg { color: #5eead4; }
     .mode-tab.active { background: #0f172a; color: white; }
     .group-add-mode.active { background: #0f172a; color: white; }
+    .campaign-row.selected { background: rgba(13,148,136,.08); }
+    #app, #master-app { min-height: 100vh; }
+    .app-sidebar { width: 16.5rem; }
     .status-pill {
       display: inline-flex; align-items: center; gap: .35rem; border-radius: 999px;
       padding: .2rem .65rem; font-size: .72rem; font-weight: 600;
@@ -92,34 +97,45 @@
 
   <!-- Company app -->
   <div id="app" class="hidden">
-    <header class="sticky top-0 z-30 border-b border-slate-200/80 bg-white/80 backdrop-blur-md">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 class="font-display text-xl font-bold tracking-tight text-ink-950">SMS Campaign Portal</h1>
-          <p class="text-xs text-slate-500">
-            Company: <span id="company-name" class="font-semibold text-ink-800">—</span>
-            · Signed in as <span id="signed-in-user" class="font-semibold text-ink-800">—</span>
-          </p>
+    <div class="flex min-h-screen">
+      <aside class="app-sidebar shrink-0 bg-ink-950 text-slate-300 flex flex-col border-r border-ink-800">
+        <div class="px-5 py-5 border-b border-white/10">
+          <p class="font-display text-lg font-bold text-white tracking-tight">SMS Portal</p>
+          <p class="mt-1 text-xs text-slate-400 truncate" id="company-name">—</p>
         </div>
-        <div class="flex items-center gap-2">
-          <span class="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 px-2.5 py-1 rounded-full bg-slate-100">
-            <span class="dot pulse-online text-ok"></span> Live
-          </span>
-          <button id="logout-btn" class="text-xs font-medium text-slate-600 hover:text-ink-900 px-3 py-1.5 rounded-lg hover:bg-slate-100">Lock</button>
+        <nav class="flex-1 p-3 space-y-1 overflow-y-auto">
+          <p class="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Main</p>
+          <button data-view="overview" class="sidebar-link nav-btn active w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-left hover:bg-white/5 transition">Overview</button>
+          <button data-view="campaigns" class="sidebar-link nav-btn w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-left hover:bg-white/5 transition">Campaigns</button>
+          <button data-view="create" class="sidebar-link nav-btn w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-left hover:bg-white/5 transition">New Campaign</button>
+          <button data-view="groups" class="sidebar-link nav-btn w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-left hover:bg-white/5 transition">Contact Groups</button>
+          <p class="px-3 pt-4 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Operations</p>
+          <button data-view="monitor" class="sidebar-link nav-btn w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-left hover:bg-white/5 transition">Live Monitor</button>
+          <button data-view="gateways" class="sidebar-link nav-btn w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-left hover:bg-white/5 transition">Gateways</button>
+          <p class="px-3 pt-4 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Account</p>
+          <button data-view="users" class="sidebar-link nav-btn w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-left hover:bg-white/5 transition">Users</button>
+          <button data-view="settings" class="sidebar-link nav-btn w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-left hover:bg-white/5 transition">Settings</button>
+        </nav>
+        <div class="p-4 border-t border-white/10 space-y-2">
+          <p class="text-xs text-slate-400 truncate">Signed in as <span id="signed-in-user" class="text-slate-200 font-medium">—</span></p>
+          <button id="logout-btn" class="w-full rounded-xl border border-white/10 text-sm font-medium px-3 py-2 hover:bg-white/5 transition">Sign out</button>
         </div>
-      </div>
-      <nav class="max-w-7xl mx-auto px-4 sm:px-6 pb-3 flex flex-wrap gap-2">
-        <button data-view="overview" class="nav-btn active px-3.5 py-1.5 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition">Overview</button>
-        <button data-view="groups" class="nav-btn px-3.5 py-1.5 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition">Contact Groups</button>
-        <button data-view="create" class="nav-btn px-3.5 py-1.5 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition">Create Campaign</button>
-        <button data-view="monitor" class="nav-btn px-3.5 py-1.5 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition">Live Monitor</button>
-        <button data-view="gateways" class="nav-btn px-3.5 py-1.5 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition">Gateways</button>
-        <button data-view="users" class="nav-btn px-3.5 py-1.5 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition">Users</button>
-        <button data-view="settings" class="nav-btn px-3.5 py-1.5 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition">Settings</button>
-      </nav>
-    </header>
+      </aside>
 
-    <main class="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+      <div class="flex-1 min-w-0 flex flex-col">
+        <header class="sticky top-0 z-30 border-b border-slate-200/80 bg-white/90 backdrop-blur-md">
+          <div class="px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h1 id="page-title" class="font-display text-xl font-bold tracking-tight text-ink-950">Overview</h1>
+              <p class="text-xs text-slate-500">Company dashboard</p>
+            </div>
+            <span class="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 px-2.5 py-1 rounded-full bg-slate-100">
+              <span class="dot pulse-online text-ok"></span> Live
+            </span>
+          </div>
+        </header>
+
+    <main class="flex-1 px-4 sm:px-6 py-6 space-y-6">
       <section id="view-overview" class="view space-y-6">
         <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
           <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel p-4">
@@ -147,12 +163,20 @@
             <p id="stat-failed" class="mt-1 font-display text-2xl font-bold text-danger">0</p>
           </div>
         </div>
+        <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel p-5">
+          <h2 class="font-display font-semibold text-lg">Quick tip</h2>
+          <p class="mt-1 text-sm text-slate-500">Open <span class="font-medium text-ink-800">Campaigns</span> in the sidebar to view counts, activate/pause sending, and inspect phone statuses.</p>
+          <button type="button" data-view="campaigns" class="mt-4 rounded-xl bg-accent hover:bg-accent-dark text-white text-sm font-semibold px-4 py-2 jump-campaigns">Go to Campaigns</button>
+        </div>
+      </section>
 
+      <!-- Campaigns list + detail (no separate View status button page) -->
+      <section id="view-campaigns" class="view hidden space-y-4">
         <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel overflow-hidden">
-          <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+          <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
             <div>
-              <h2 class="font-display font-semibold text-lg">Recent Campaigns</h2>
-              <p class="text-sm text-slate-500">Click a campaign or <span class="font-medium text-accent">View status</span> to see each phone number</p>
+              <h2 class="font-display font-semibold text-lg">Campaigns</h2>
+              <p class="text-sm text-slate-500">Select a row to see phone-level status. Inactive campaigns are not sent to the APK.</p>
             </div>
             <button id="refresh-overview" class="text-sm font-medium text-accent hover:text-accent-dark">Refresh</button>
           </div>
@@ -160,34 +184,33 @@
             <table class="w-full text-sm">
               <thead class="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 sticky top-0">
                 <tr>
-                  <th class="px-5 py-3 font-medium">Title</th>
-                  <th class="px-5 py-3 font-medium">Total</th>
-                  <th class="px-5 py-3 font-medium">Queued</th>
-                  <th class="px-5 py-3 font-medium">Sent</th>
-                  <th class="px-5 py-3 font-medium">Delivered</th>
-                  <th class="px-5 py-3 font-medium">Failed</th>
-                  <th class="px-5 py-3 font-medium">Created</th>
-                  <th class="px-5 py-3 font-medium"></th>
+                  <th class="px-4 py-3 font-medium">Title</th>
+                  <th class="px-4 py-3 font-medium">Status</th>
+                  <th class="px-4 py-3 font-medium">Total</th>
+                  <th class="px-4 py-3 font-medium">Queued</th>
+                  <th class="px-4 py-3 font-medium">Processing</th>
+                  <th class="px-4 py-3 font-medium">Sent</th>
+                  <th class="px-4 py-3 font-medium">Delivered</th>
+                  <th class="px-4 py-3 font-medium">Failed</th>
+                  <th class="px-4 py-3 font-medium">Created</th>
+                  <th class="px-4 py-3 font-medium">Action</th>
                 </tr>
               </thead>
               <tbody id="campaigns-tbody" class="divide-y divide-slate-100"></tbody>
             </table>
           </div>
         </div>
-      </section>
 
-      <!-- Campaign detail: phone-by-phone status -->
-      <section id="view-campaign-detail" class="view hidden space-y-4">
+        <div id="campaign-detail-panel" class="hidden space-y-4">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <button type="button" id="back-to-overview" class="text-sm font-medium text-accent hover:text-accent-dark mb-1">← Back to Overview</button>
             <h2 class="font-display font-semibold text-xl" id="detail-campaign-title">Campaign</h2>
             <p class="text-sm text-slate-500 font-mono" id="detail-campaign-id"></p>
           </div>
-          <button type="button" id="refresh-campaign-detail" class="text-sm font-medium text-accent hover:text-accent-dark">Refresh</button>
+          <button type="button" id="refresh-campaign-detail" class="text-sm font-medium text-accent hover:text-accent-dark">Refresh detail</button>
         </div>
 
-        <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
           <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel p-4">
             <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Total</p>
             <p id="detail-stat-total" class="mt-1 font-display text-2xl font-bold">0</p>
@@ -195,6 +218,10 @@
           <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel p-4">
             <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Queued</p>
             <p id="detail-stat-queued" class="mt-1 font-display text-2xl font-bold text-amber-600">0</p>
+          </div>
+          <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel p-4">
+            <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Processing</p>
+            <p id="detail-stat-processing" class="mt-1 font-display text-2xl font-bold text-sky-600">0</p>
           </div>
           <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel p-4">
             <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Sent</p>
@@ -268,6 +295,7 @@
               <tbody id="detail-messages-tbody" class="divide-y divide-slate-100"></tbody>
             </table>
           </div>
+        </div>
         </div>
       </section>
 
@@ -441,6 +469,13 @@
               <textarea id="camp-body" required rows="5" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 resize-y" placeholder="Hello! Your order is ready for pickup."></textarea>
               <p class="mt-1 text-xs text-slate-400"><span id="body-count">0</span> characters</p>
             </div>
+            <div>
+              <label class="block text-sm font-medium mb-1.5" for="camp-status">Campaign status</label>
+              <select id="camp-status" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20">
+                <option value="ACTIVE">Active — APK can pull jobs</option>
+                <option value="INACTIVE">Inactive — APK will not receive these jobs</option>
+              </select>
+            </div>
             <div class="flex flex-wrap items-center gap-3">
               <button type="submit" id="create-btn" class="rounded-xl bg-accent hover:bg-accent-dark text-white font-semibold px-5 py-2.5 transition disabled:opacity-50">Create & Queue Campaign</button>
               <p id="create-feedback" class="text-sm"></p>
@@ -583,21 +618,34 @@
         </div>
       </section>
     </main>
+      </div>
+    </div>
   </div>
 
   <!-- Master admin app -->
   <div id="master-app" class="hidden">
-    <header class="sticky top-0 z-30 border-b border-slate-200/80 bg-white/80 backdrop-blur-md">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 class="font-display text-xl font-bold tracking-tight text-ink-950">Master Admin</h1>
-          <p class="text-xs text-slate-500">Create companies and issue isolated API tokens</p>
+    <div class="flex min-h-screen">
+      <aside class="app-sidebar shrink-0 bg-ink-950 text-slate-300 flex flex-col border-r border-ink-800">
+        <div class="px-5 py-5 border-b border-white/10">
+          <p class="font-display text-lg font-bold text-white tracking-tight">Master Admin</p>
+          <p class="mt-1 text-xs text-slate-400">Multi-company control</p>
         </div>
-        <button id="master-logout-btn" class="text-xs font-medium text-slate-600 hover:text-ink-900 px-3 py-1.5 rounded-lg hover:bg-slate-100">Lock</button>
-      </div>
-    </header>
-
-    <main class="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+        <nav class="flex-1 p-3 space-y-1">
+          <button type="button" id="master-nav-companies" class="sidebar-link active w-full rounded-xl px-3 py-2.5 text-sm font-medium text-left hover:bg-white/5 transition">Companies</button>
+          <button type="button" id="show-create-company" class="sidebar-link w-full rounded-xl px-3 py-2.5 text-sm font-medium text-left hover:bg-white/5 transition">Create Company</button>
+        </nav>
+        <div class="p-4 border-t border-white/10">
+          <button id="master-logout-btn" class="w-full rounded-xl border border-white/10 text-sm font-medium px-3 py-2 hover:bg-white/5 transition">Sign out</button>
+        </div>
+      </aside>
+      <div class="flex-1 min-w-0 flex flex-col">
+        <header class="sticky top-0 z-30 border-b border-slate-200/80 bg-white/90 backdrop-blur-md">
+          <div class="px-4 sm:px-6 py-3.5">
+            <h1 class="font-display text-xl font-bold tracking-tight text-ink-950">Companies</h1>
+            <p class="text-xs text-slate-500">Create companies and issue isolated API tokens</p>
+          </div>
+        </header>
+    <main class="flex-1 px-4 sm:px-6 py-6 space-y-6">
       <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel overflow-hidden">
         <div class="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -606,10 +654,6 @@
           </div>
           <div class="flex items-center gap-3">
             <button id="refresh-companies" class="text-sm font-medium text-accent hover:text-accent-dark">Refresh</button>
-            <button id="show-create-company" type="button"
-              class="rounded-xl bg-ink-900 hover:bg-ink-800 text-white text-sm font-semibold px-4 py-2 transition">
-              Create Company
-            </button>
           </div>
         </div>
         <div class="table-wrap">
@@ -719,6 +763,8 @@
         </form>
       </div>
     </main>
+      </div>
+    </div>
   </div>
 
   <!-- In-app dialog (replaces window.alert / window.confirm) -->
@@ -735,7 +781,7 @@
   </div>
 
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-  <script src="/js/app.js?v=apk-batch-limit-1"></script>
+  <script src="/js/app.js?v=sidebar-campaigns-1"></script>
 </body>
 </html>
 
