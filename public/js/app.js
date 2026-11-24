@@ -2,10 +2,13 @@
   const TOKEN_KEY = 'sms_portal_token';
   const MODE_KEY = 'sms_portal_mode';
   const USER_KEY = 'sms_portal_user';
-  const MASTER_RETURN_KEY = 'sms_portal_master_return';
+  const MASTER_TOKEN_KEY = 'sms_portal_master_token';
+  const WORKSPACE_TOKEN_KEY = 'sms_portal_workspace_token';
 
   let token = localStorage.getItem(TOKEN_KEY) || '';
   let mode = localStorage.getItem(MODE_KEY) || 'company';
+  let masterToken = localStorage.getItem(MASTER_TOKEN_KEY) || '';
+  let workspaceToken = localStorage.getItem(WORKSPACE_TOKEN_KEY) || '';
   let signedInUser = null;
   try {
     signedInUser = JSON.parse(localStorage.getItem(USER_KEY) || 'null');
@@ -17,13 +20,12 @@
   let currentView = 'overview';
   let companyUsers = {};
   let companyApiToken = '';
-  let actingAsMaster = false;
+  let masterWorkspace = null;
 
   const $ = (id) => document.getElementById(id);
 
   const authScreen = $('auth-screen');
   const app = $('app');
-  const masterApp = $('master-app');
   const authError = $('auth-error');
 
   /** In-app alert (replaces window.alert) */
@@ -82,9 +84,16 @@
   }
 
   async function api(path, options = {}) {
+    let authToken = token;
+    if (mode === 'master') {
+      if (path.startsWith('/api/master')) authToken = masterToken || token;
+      else if (path.startsWith('/api/admin') || path.startsWith('/api/gateway')) {
+        authToken = workspaceToken || token;
+      }
+    }
     const headers = {
       'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
       ...(options.headers || {}),
     };
     const res = await fetch(path, { ...options, headers });
@@ -109,106 +118,88 @@
     else localStorage.removeItem(USER_KEY);
   }
 
-  function getMasterReturn() {
-    try {
-      return JSON.parse(localStorage.getItem(MASTER_RETURN_KEY) || 'null');
-    } catch {
-      return null;
-    }
-  }
-
-  function updateMasterActingUi(companyName) {
-    const banner = $('master-acting-banner');
-    const backBtn = $('back-to-master-btn');
-    const hasReturn = !!getMasterReturn();
-    actingAsMaster = hasReturn;
-    if (banner) banner.classList.toggle('hidden', !hasReturn);
-    if (backBtn) backBtn.classList.toggle('hidden', !hasReturn);
-    if (hasReturn && $('master-acting-company')) {
-      $('master-acting-company').textContent = companyName || 'selected company';
+  function setPortalNavMode(isMaster) {
+    const companyNav = $('nav-company');
+    const masterNav = $('nav-master');
+    if (companyNav) companyNav.classList.toggle('hidden', !!isMaster);
+    if (masterNav) masterNav.classList.toggle('hidden', !isMaster);
+    if ($('portal-brand')) $('portal-brand').textContent = isMaster ? 'Master Admin' : 'SMS Portal';
+    if ($('page-subtitle')) {
+      $('page-subtitle').textContent = isMaster ? 'One portal · companies + Master SMS' : 'Company dashboard';
     }
   }
 
   function unlockCompany() {
     authScreen.classList.add('hidden');
-    masterApp.classList.add('hidden');
     app.classList.remove('hidden');
+    setPortalNavMode(false);
     if (signedInUser) {
       $('signed-in-user').textContent = signedInUser.username || signedInUser.name || '—';
     }
-    updateMasterActingUi(signedInUser?.companyName || $('company-name')?.textContent);
     startPolling();
     loadView(currentView);
   }
 
-  function unlockMaster() {
+  async function unlockMaster() {
     authScreen.classList.add('hidden');
-    app.classList.add('hidden');
-    masterApp.classList.remove('hidden');
-    localStorage.removeItem(MASTER_RETURN_KEY);
-    actingAsMaster = false;
-    updateMasterActingUi();
-    stopPolling();
+    app.classList.remove('hidden');
+    setPortalNavMode(true);
+    if (signedInUser) {
+      $('signed-in-user').textContent = signedInUser.username || 'master';
+    }
+    if ($('company-name')) $('company-name').textContent = 'Master Workspace';
+
+    if (!workspaceToken) {
+      try {
+        const data = await api('/api/master/workspace');
+        masterWorkspace = data.workspace;
+        workspaceToken = data.workspace?.apiToken || '';
+        if (workspaceToken) localStorage.setItem(WORKSPACE_TOKEN_KEY, workspaceToken);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    if (workspaceToken) {
+      try {
+        await loadMe();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
     hideCreateCompany();
     hideEditCompany();
-    loadCompanies();
-  }
-
-  /** Master opens a full company portal (campaigns, groups, gateways, etc.) */
-  async function openCompanyAsMaster(company) {
-    if (!company?.apiToken) {
-      throw new Error('Company API token missing');
-    }
-    if (mode === 'master' && token) {
-      localStorage.setItem(
-        MASTER_RETURN_KEY,
-        JSON.stringify({
-          token,
-          user: signedInUser,
-        })
-      );
-    }
-    persistSession(company.apiToken, 'company', {
-      username: 'master',
-      name: 'Master Admin',
-      companyName: company.name,
-    });
-    currentView = 'overview';
-    detailCampaignId = '';
-    await loadMe();
-    unlockCompany();
-    updateMasterActingUi(company.name);
-  }
-
-  function returnToMaster() {
-    const saved = getMasterReturn();
-    if (!saved?.token) {
-      lock();
-      return;
-    }
-    stopPolling();
-    persistSession(saved.token, 'master', saved.user || { username: 'master', name: 'Master Admin' });
-    localStorage.removeItem(MASTER_RETURN_KEY);
-    actingAsMaster = false;
-    updateMasterActingUi();
-    unlockMaster();
+    currentView = 'companies';
+    startPolling();
+    switchView('companies');
   }
 
   let editRemovedUserIds = [];
 
   function showCreateCompany() {
     hideEditCompany();
-    $('create-company-panel').classList.remove('hidden');
-    $('company-feedback').textContent = '';
-    $('new-token-box').classList.add('hidden');
-    $('co-name').focus();
+    hideCompanyOverview();
+    if (mode === 'master') switchView('companies');
+    const modal = $('create-company-modal');
+    if ($('company-feedback')) {
+      $('company-feedback').textContent = '';
+      $('company-feedback').className = 'text-sm';
+    }
+    if ($('new-token-box')) $('new-token-box').classList.add('hidden');
+    if ($('company-form')) $('company-form').reset();
+    modal?.classList.remove('hidden');
+    $('co-name')?.focus();
   }
 
   function hideCreateCompany() {
-    $('create-company-panel').classList.add('hidden');
-    $('company-form').reset();
-    $('company-feedback').textContent = '';
-    $('new-token-box').classList.add('hidden');
+    $('create-company-modal')?.classList.add('hidden');
+    if ($('company-form')) $('company-form').reset();
+    if ($('company-feedback')) {
+      $('company-feedback').textContent = '';
+      $('company-feedback').className = 'text-sm';
+    }
+    if ($('new-token-box')) $('new-token-box').classList.add('hidden');
   }
 
   function hideEditCompany() {
@@ -278,6 +269,7 @@
 
   async function openEditCompany(id) {
     hideCreateCompany();
+    hideCompanyOverview();
     editRemovedUserIds = [];
     const data = await api(`/api/master/companies/${id}`);
     const company = data.company;
@@ -294,18 +286,19 @@
   function lock() {
     token = '';
     mode = 'company';
+    masterToken = '';
+    workspaceToken = '';
+    masterWorkspace = null;
     signedInUser = null;
     companyUsers = {};
     companyApiToken = '';
-    actingAsMaster = false;
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(MODE_KEY);
     localStorage.removeItem(USER_KEY);
-    localStorage.removeItem(MASTER_RETURN_KEY);
-    updateMasterActingUi();
+    localStorage.removeItem(MASTER_TOKEN_KEY);
+    localStorage.removeItem(WORKSPACE_TOKEN_KEY);
     stopPolling();
     app.classList.add('hidden');
-    masterApp.classList.add('hidden');
     authScreen.classList.remove('hidden');
     $('login-password').value = '';
   }
@@ -313,6 +306,11 @@
   function startPolling() {
     stopPolling();
     refreshTimer = setInterval(() => {
+      if (currentView === 'companies') loadCompanies();
+      if (currentView === 'company-overview' && viewingCompanyOverviewId) {
+        loadCompanyOverview(viewingCompanyOverviewId);
+      }
+      if (currentView === 'all-overview') loadAllOverview();
       if (currentView === 'overview') loadOverview();
       if (currentView === 'campaigns') {
         loadCampaigns();
@@ -332,9 +330,11 @@
   }
 
   const PAGE_TITLES = {
+    companies: 'Companies',
+    'company-overview': 'Company overview',
+    'all-overview': 'All overview',
     overview: 'Overview',
     campaigns: 'Campaigns',
-    create: 'New Campaign',
     groups: 'Contact Groups',
     monitor: 'Live Monitor',
     gateways: 'Gateways',
@@ -342,8 +342,26 @@
     settings: 'Settings',
   };
 
+  function openCreateCampaignModal() {
+    const modal = $('create-campaign-modal');
+    if (!modal) return;
+    if ($('create-feedback')) {
+      $('create-feedback').textContent = '';
+      $('create-feedback').className = 'text-sm';
+    }
+    loadCampaignGroups();
+    modal.classList.remove('hidden');
+    $('camp-title')?.focus();
+  }
+
+  function closeCreateCampaignModal() {
+    const modal = $('create-campaign-modal');
+    if (!modal) return;
+    modal.classList.add('hidden');
+  }
+
   function switchView(name) {
-    if (name === 'campaign-detail') name = 'campaigns';
+    if (name === 'campaign-detail' || name === 'create') name = 'campaigns';
     currentView = name;
     document.querySelectorAll('#app .view').forEach((el) => el.classList.add('hidden'));
     document.querySelectorAll('#app .nav-btn').forEach((btn) => {
@@ -356,6 +374,11 @@
   }
 
   function loadView(name) {
+    if (name === 'companies') loadCompanies();
+    if (name === 'company-overview' && viewingCompanyOverviewId) {
+      loadCompanyOverview(viewingCompanyOverviewId);
+    }
+    if (name === 'all-overview') loadAllOverview();
     if (name === 'overview') loadOverview();
     if (name === 'campaigns') {
       loadCampaigns();
@@ -366,7 +389,6 @@
       }
     }
     if (name === 'groups') loadGroups();
-    if (name === 'create') loadCampaignGroups();
     if (name === 'monitor') loadMessages();
     if (name === 'gateways') loadDevices();
     if (name === 'users') loadUsers();
@@ -683,7 +705,10 @@
 
   async function loadMe() {
     const data = await api('/api/admin/me');
-    $('company-name').textContent = data.company.name;
+    if ($('company-name')) {
+      $('company-name').textContent =
+        mode === 'master' ? 'Master Workspace' : data.company.name;
+    }
     companyUsers = data.users || {};
     companyApiToken = data.company.apiToken || '';
     if ($('company-api-token')) $('company-api-token').textContent = companyApiToken || '—';
@@ -813,19 +838,145 @@
     }
   }
 
+  function fillOverviewStats(s) {
+    if ($('stat-campaigns')) $('stat-campaigns').textContent = s.totalCampaigns ?? 0;
+    if ($('stat-queued')) $('stat-queued').textContent = s.totalQueued ?? 0;
+    if ($('stat-processing')) $('stat-processing').textContent = s.totalProcessing ?? 0;
+    if ($('stat-sent')) $('stat-sent').textContent = s.totalSent ?? 0;
+    if ($('stat-delivered')) $('stat-delivered').textContent = s.totalDelivered ?? 0;
+    if ($('stat-failed')) $('stat-failed').textContent = s.totalFailed ?? 0;
+  }
+
   async function loadOverview() {
     try {
+      if ($('overview-subtitle')) {
+        $('overview-subtitle').textContent =
+          mode === 'master' ? 'SMS totals for Master Workspace.' : 'SMS totals for this company.';
+      }
       const statsRes = await api('/api/admin/stats');
-      const s = statsRes.stats;
-      $('stat-campaigns').textContent = s.totalCampaigns;
-      $('stat-queued').textContent = s.totalQueued;
-      $('stat-processing').textContent = s.totalProcessing;
-      $('stat-sent').textContent = s.totalSent;
-      $('stat-delivered').textContent = s.totalDelivered;
-      $('stat-failed').textContent = s.totalFailed;
+      fillOverviewStats(statsRes.stats || {});
     } catch (err) {
       console.error(err);
     }
+  }
+
+  async function loadAllOverview() {
+    try {
+      const data = await api('/api/master/overview');
+      const s = data.totals || {};
+      if ($('all-stat-companies')) $('all-stat-companies').textContent = s.totalCompanies ?? 0;
+      if ($('all-stat-campaigns')) $('all-stat-campaigns').textContent = s.totalCampaigns ?? 0;
+      if ($('all-stat-queued')) $('all-stat-queued').textContent = s.totalQueued ?? 0;
+      if ($('all-stat-processing')) $('all-stat-processing').textContent = s.totalProcessing ?? 0;
+      if ($('all-stat-sent')) $('all-stat-sent').textContent = s.totalSent ?? 0;
+      if ($('all-stat-delivered')) $('all-stat-delivered').textContent = s.totalDelivered ?? 0;
+      if ($('all-stat-failed')) $('all-stat-failed').textContent = s.totalFailed ?? 0;
+
+      const tbody = $('all-overview-tbody');
+      if (!tbody) return;
+      const rows = data.companies || [];
+      if (!rows.length) {
+        tbody.innerHTML =
+          '<tr><td colspan="10" class="px-5 py-8 text-center text-slate-400">No companies yet.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = rows
+        .map((c) => {
+          const badge = c.isMasterWorkspace
+            ? '<span class="ml-2 inline-flex items-center rounded-md bg-teal-50 text-teal-800 text-[10px] font-semibold px-1.5 py-0.5">Master</span>'
+            : '';
+          return `
+          <tr class="hover:bg-slate-50/80" data-id="${escapeHtml(c.id)}">
+            <td class="px-4 py-3">
+              <div class="font-medium text-ink-900">${escapeHtml(c.name)}${badge}</div>
+              <div class="text-xs text-slate-400 font-mono">${escapeHtml(c.id)}</div>
+            </td>
+            <td class="px-4 py-3">${c.userCount ?? 0}</td>
+            <td class="px-4 py-3">${c.deviceCount ?? 0}</td>
+            <td class="px-4 py-3">${c.totalCampaigns ?? 0}</td>
+            <td class="px-4 py-3 text-amber-600 font-medium">${c.totalQueued ?? 0}</td>
+            <td class="px-4 py-3 text-sky-600 font-medium">${c.totalProcessing ?? 0}</td>
+            <td class="px-4 py-3 text-teal-600 font-medium">${c.totalSent ?? 0}</td>
+            <td class="px-4 py-3 text-emerald-600 font-medium">${c.totalDelivered ?? 0}</td>
+            <td class="px-4 py-3 text-red-600 font-medium">${c.totalFailed ?? 0}</td>
+            <td class="px-4 py-3 whitespace-nowrap">
+              <button type="button" data-action="overview" class="text-xs font-medium text-accent hover:underline">Overview</button>
+            </td>
+          </tr>`;
+        })
+        .join('');
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  let viewingCompanyOverviewId = null;
+
+  async function loadCompanyOverview(companyId) {
+    if (!companyId) return;
+    try {
+      const data = await api(`/api/master/companies/${companyId}/overview`);
+      const c = data.company || {};
+      const s = data.stats || {};
+      if ($('co-ov-name')) $('co-ov-name').textContent = c.name || 'Company';
+      if ($('co-ov-id')) $('co-ov-id').textContent = c.id || '';
+      if ($('co-ov-users')) $('co-ov-users').textContent = c.userCount ?? 0;
+      if ($('co-ov-devices')) $('co-ov-devices').textContent = c.deviceCount ?? (data.devices || []).length;
+      if ($('co-ov-campaigns')) $('co-ov-campaigns').textContent = s.totalCampaigns ?? 0;
+      if ($('co-ov-queued')) $('co-ov-queued').textContent = s.totalQueued ?? 0;
+      if ($('co-ov-processing')) $('co-ov-processing').textContent = s.totalProcessing ?? 0;
+      if ($('co-ov-sent')) $('co-ov-sent').textContent = s.totalSent ?? 0;
+      if ($('co-ov-delivered')) $('co-ov-delivered').textContent = s.totalDelivered ?? 0;
+      if ($('co-ov-failed')) $('co-ov-failed').textContent = s.totalFailed ?? 0;
+      if ($('co-ov-messages')) $('co-ov-messages').textContent = s.totalMessages ?? 0;
+      if ($('page-title')) {
+        $('page-title').textContent = c.name ? `${c.name} overview` : 'Company overview';
+      }
+
+      const tbody = $('co-ov-campaigns-tbody');
+      const campaigns = data.campaigns || [];
+      if (tbody) {
+        if (!campaigns.length) {
+          tbody.innerHTML =
+            '<tr><td colspan="8" class="px-5 py-8 text-center text-slate-400">No campaigns for this company.</td></tr>';
+        } else {
+          tbody.innerHTML = campaigns
+            .map((camp) => {
+              const status = String(camp.status || 'ACTIVE').toUpperCase();
+              return `
+              <tr class="hover:bg-slate-50/80">
+                <td class="px-4 py-3">
+                  <div class="font-medium text-ink-900">${escapeHtml(camp.title)}</div>
+                  <div class="text-xs text-slate-400 font-mono">${escapeHtml(camp.id)}</div>
+                </td>
+                <td class="px-4 py-3">${campaignStatusBadge(status)}</td>
+                <td class="px-4 py-3">${camp.totalMessages ?? 0}</td>
+                <td class="px-4 py-3 text-amber-600 font-medium">${camp.queued ?? 0}</td>
+                <td class="px-4 py-3 text-sky-600 font-medium">${camp.processing ?? 0}</td>
+                <td class="px-4 py-3 text-teal-600 font-medium">${camp.sent ?? 0}</td>
+                <td class="px-4 py-3 text-emerald-600 font-medium">${camp.delivered ?? 0}</td>
+                <td class="px-4 py-3 text-red-600 font-medium">${camp.failed ?? 0}</td>
+              </tr>`;
+            })
+            .join('');
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      await appAlert(err.message, 'Error');
+    }
+  }
+
+  async function openCompanyOverview(companyId) {
+    viewingCompanyOverviewId = companyId;
+    hideEditCompany();
+    hideCreateCompany();
+    switchView('company-overview');
+  }
+
+  function hideCompanyOverview() {
+    viewingCompanyOverviewId = null;
+    $('company-overview-modal')?.classList.add('hidden');
   }
 
   async function loadCampaigns() {
@@ -994,10 +1145,10 @@
             <td class="px-5 py-3">${c.deviceCount || 0}</td>
             <td class="px-5 py-3"><code class="token-box text-slate-600">${escapeHtml(c.apiToken)}</code></td>
             <td class="px-5 py-3 whitespace-nowrap">
-              <button data-action="open" class="text-xs font-semibold text-white bg-accent hover:bg-accent-dark rounded-lg px-2.5 py-1.5 mr-2">Open portal</button>
-              <button data-action="edit" class="text-xs font-medium text-ink-800 hover:underline mr-2">Edit / login</button>
-              <button data-action="regen" class="text-xs font-medium text-accent hover:underline mr-2">Regen token</button>
-              <button data-action="delete" class="text-xs font-medium text-danger hover:underline">Delete</button>
+              <button type="button" data-action="overview" class="rounded-lg bg-accent hover:bg-accent-dark text-white text-xs font-semibold px-2.5 py-1.5 mr-1">Overview</button>
+              <button type="button" data-action="edit" class="text-xs font-medium text-ink-800 hover:underline mr-2">Edit / login</button>
+              <button type="button" data-action="regen" class="text-xs font-medium text-accent hover:underline mr-2">Regen token</button>
+              <button type="button" data-action="delete" class="text-xs font-medium text-danger hover:underline">Delete</button>
             </td>
           </tr>`;
         })
@@ -1027,7 +1178,12 @@
       authError.classList.add('hidden');
 
       if (data.mode === 'master') {
-        unlockMaster();
+        masterWorkspace = data.workspace || null;
+        masterToken = data.token;
+        workspaceToken = data.workspace?.apiToken || '';
+        localStorage.setItem(MASTER_TOKEN_KEY, masterToken);
+        if (workspaceToken) localStorage.setItem(WORKSPACE_TOKEN_KEY, workspaceToken);
+        await unlockMaster();
       } else {
         companyApiToken = data.company?.apiToken || data.token;
         await loadMe();
@@ -1040,14 +1196,34 @@
   });
 
   $('logout-btn').addEventListener('click', lock);
-  $('master-logout-btn').addEventListener('click', lock);
-  $('back-to-master-btn')?.addEventListener('click', returnToMaster);
-  $('back-to-master-banner-btn')?.addEventListener('click', returnToMaster);
+
+  $('open-create-campaign')?.addEventListener('click', openCreateCampaignModal);
+  $('close-create-campaign')?.addEventListener('click', closeCreateCampaignModal);
+  $('cancel-create-campaign')?.addEventListener('click', closeCreateCampaignModal);
+  $('create-campaign-backdrop')?.addEventListener('click', closeCreateCampaignModal);
 
   document.querySelectorAll('#app .nav-btn').forEach((btn) => {
     btn.addEventListener('click', () => switchView(btn.dataset.view));
   });
 
+  $('refresh-overview-page')?.addEventListener('click', loadOverview);
+  $('refresh-all-overview')?.addEventListener('click', loadAllOverview);
+  $('hide-company-overview')?.addEventListener('click', hideCompanyOverview);
+  $('company-overview-backdrop')?.addEventListener('click', hideCompanyOverview);
+  $('back-to-companies')?.addEventListener('click', () => {
+    hideCompanyOverview();
+    switchView('companies');
+  });
+  $('refresh-company-overview')?.addEventListener('click', () => {
+    if (viewingCompanyOverviewId) loadCompanyOverview(viewingCompanyOverviewId);
+  });
+  $('all-overview-tbody')?.addEventListener('click', async (e) => {
+    const btn = e.target.closest('button[data-action="overview"]');
+    if (!btn) return;
+    const row = btn.closest('tr[data-id]');
+    const id = row?.dataset.id;
+    if (id) await openCompanyOverview(id);
+  });
   $('refresh-overview')?.addEventListener('click', () => {
     loadCampaigns();
     if (detailCampaignId) loadCampaignDetail();
@@ -1055,11 +1231,6 @@
   $('refresh-campaign-detail')?.addEventListener('click', loadCampaignDetail);
   document.querySelectorAll('.jump-campaigns').forEach((btn) => {
     btn.addEventListener('click', () => switchView('campaigns'));
-  });
-  $('master-nav-companies')?.addEventListener('click', () => {
-    hideCreateCompany();
-    hideEditCompany();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
   });
   $('detail-search').addEventListener('input', renderDetailMessages);
   $('detail-status').addEventListener('change', renderDetailMessages);
@@ -1459,12 +1630,17 @@
         }),
       });
       feedback.className = 'text-sm text-ok';
-      feedback.textContent = `Queued ${data.campaign.totalMessages} jobs · ${data.campaign.status || 'ACTIVE'} · ${data.campaign.id}`;
+      feedback.textContent = `Queued ${data.campaign.totalMessages} jobs · ${data.campaign.status || 'ACTIVE'}`;
       $('campaign-form').reset();
       if ($('camp-status')) $('camp-status').value = 'ACTIVE';
       $('body-count').textContent = '0';
       $('camp-group-count').textContent = '0';
+      closeCreateCampaignModal();
       switchView('campaigns');
+      loadCampaigns();
+      if (data.campaign?.id && cachedCampaigns) {
+        // list refresh will populate cache
+      }
     } catch (err) {
       feedback.className = 'text-sm text-danger';
       feedback.textContent = err.message;
@@ -1517,8 +1693,10 @@
   $('refresh-monitor').addEventListener('click', loadMessages);
   $('refresh-gateways').addEventListener('click', loadDevices);
   $('refresh-companies').addEventListener('click', loadCompanies);
-  $('show-create-company').addEventListener('click', showCreateCompany);
-  $('hide-create-company').addEventListener('click', hideCreateCompany);
+  $('show-create-company')?.addEventListener('click', showCreateCompany);
+  $('hide-create-company')?.addEventListener('click', hideCreateCompany);
+  $('cancel-create-company')?.addEventListener('click', hideCreateCompany);
+  $('create-company-backdrop')?.addEventListener('click', hideCreateCompany);
   $('hide-edit-company').addEventListener('click', hideEditCompany);
   $('add-edit-user').addEventListener('click', () => {
     $('edit-users-list').insertAdjacentHTML('beforeend', userEditRow());
@@ -1672,10 +1850,8 @@
     if (!id) return;
 
     try {
-      if (btn.dataset.action === 'open') {
-        const data = await api(`/api/master/companies/${id}`);
-        await openCompanyAsMaster(data.company);
-        return;
+      if (btn.dataset.action === 'overview') {
+        await openCompanyOverview(id);
       }
       if (btn.dataset.action === 'edit') {
         await openEditCompany(id);
@@ -1709,18 +1885,13 @@
   // Boot — restore session if token still valid
   if (token) {
     if (mode === 'master') {
+      masterToken = masterToken || token;
       api('/api/master/companies')
         .then(() => unlockMaster())
         .catch(() => lock());
     } else {
       loadMe()
-        .then(() => {
-          unlockCompany();
-          const saved = getMasterReturn();
-          if (saved) {
-            updateMasterActingUi($('company-name')?.textContent || signedInUser?.companyName);
-          }
-        })
+        .then(() => unlockCompany())
         .catch(() => lock());
     }
   }

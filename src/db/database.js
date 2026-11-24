@@ -108,6 +108,7 @@ ensureColumn('MessageJob', 'companyId', 'TEXT');
 ensureColumn('User', 'username', 'TEXT');
 ensureColumn('User', 'passwordHash', 'TEXT');
 ensureColumn('Company', 'jobBatchSize', 'INTEGER');
+ensureColumn('Company', 'isMasterWorkspace', 'INTEGER NOT NULL DEFAULT 0');
 ensureColumn('Campaign', 'status', "TEXT NOT NULL DEFAULT 'ACTIVE'");
 
 db.exec(`
@@ -256,7 +257,13 @@ function getCompanyById(id) {
 }
 
 function listCompanies() {
-  const companies = db.prepare('SELECT * FROM Company ORDER BY createdAt DESC').all();
+  const companies = db
+    .prepare(
+      `SELECT * FROM Company
+       WHERE COALESCE(isMasterWorkspace, 0) = 0
+       ORDER BY createdAt DESC`
+    )
+    .all();
   return companies.map((c) => {
     const users = usersDictForCompany(c.id);
     return {
@@ -268,6 +275,61 @@ function listCompanies() {
     };
   });
 }
+
+/**
+ * Dedicated tenant for Master Admin to send campaigns like a company.
+ * Hidden from the companies list. Android gateway uses this company's apiToken.
+ */
+function ensureMasterWorkspace() {
+  let row = db.prepare('SELECT * FROM Company WHERE COALESCE(isMasterWorkspace, 0) = 1 LIMIT 1').get();
+  if (row) return row;
+
+  const id = companyId();
+  const token = apiToken();
+  const now = new Date().toISOString();
+
+  withTransaction(() => {
+    db.prepare(
+      `INSERT INTO Company (id, name, apiToken, createdAt, isMasterWorkspace)
+       VALUES (?, ?, ?, ?, 1)`
+    ).run(id, 'Master Workspace', token, now);
+
+    const uid = newId();
+    db.prepare(
+      `INSERT INTO User (id, companyId, name, email, username, passwordHash, role)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      uid,
+      id,
+      'Master Admin',
+      'master@workspace.local',
+      '_master_workspace',
+      hashPassword(apiToken()),
+      'admin'
+    );
+  });
+
+  return getCompanyById(id);
+}
+
+function getMasterWorkspace() {
+  return ensureMasterWorkspace();
+}
+
+function publicCompany(company) {
+  if (!company) return null;
+  return {
+    id: company.id,
+    name: company.name,
+    apiToken: company.apiToken,
+    createdAt: company.createdAt,
+    jobBatchSize: company.jobBatchSize,
+    isMasterWorkspace: !!company.isMasterWorkspace,
+  };
+}
+
+// Boot: ensure master SMS workspace exists
+ensureMasterWorkspace();
 
 /**
  * Create company with required users list.
@@ -484,6 +546,9 @@ function regenerateCompanyToken(id) {
 
 function deleteCompany(id) {
   const company = getCompanyById(id);
+  if (company && Number(company.isMasterWorkspace) === 1) {
+    throw new Error('Cannot delete the Master Workspace');
+  }
   if (!company) return false;
   withTransaction(() => {
     db.prepare('DELETE FROM Contact WHERE companyId = ?').run(id);
@@ -712,6 +777,61 @@ function getOverviewStats(companyIdValue) {
   }
 
   return counts;
+}
+
+/** Master dashboard: aggregate + per-company SMS stats (includes Master Workspace). */
+function getMasterOverview() {
+  const companies = db
+    .prepare(
+      `SELECT * FROM Company
+       ORDER BY COALESCE(isMasterWorkspace, 0) DESC, createdAt DESC`
+    )
+    .all();
+
+  const totals = {
+    totalCompanies: 0,
+    totalCampaigns: 0,
+    totalQueued: 0,
+    totalProcessing: 0,
+    totalSent: 0,
+    totalDelivered: 0,
+    totalFailed: 0,
+    totalMessages: 0,
+    totalDevices: 0,
+  };
+
+  const rows = companies.map((c) => {
+    const stats = getOverviewStats(c.id);
+    const userCount = db
+      .prepare('SELECT COUNT(*) AS c FROM User WHERE companyId = ?')
+      .get(c.id).c;
+    const deviceCount = db
+      .prepare('SELECT COUNT(*) AS c FROM Device WHERE companyId = ?')
+      .get(c.id).c;
+    const isMasterWorkspace = !!c.isMasterWorkspace;
+
+    if (!isMasterWorkspace) totals.totalCompanies += 1;
+    totals.totalCampaigns += stats.totalCampaigns;
+    totals.totalQueued += stats.totalQueued;
+    totals.totalProcessing += stats.totalProcessing;
+    totals.totalSent += stats.totalSent;
+    totals.totalDelivered += stats.totalDelivered;
+    totals.totalFailed += stats.totalFailed;
+    totals.totalMessages += stats.totalMessages;
+    totals.totalDevices += deviceCount;
+
+    return {
+      id: c.id,
+      name: c.name,
+      isMasterWorkspace,
+      userCount,
+      deviceCount,
+      createdAt: c.createdAt,
+      ...stats,
+    };
+  });
+
+  return { totals, companies: rows };
 }
 
 function registerOrUpdateDevice({
@@ -1066,6 +1186,9 @@ module.exports = {
   getCompanyByToken,
   getCompanyById,
   listCompanies,
+  ensureMasterWorkspace,
+  getMasterWorkspace,
+  publicCompany,
   createCompany,
   updateCompany,
   regenerateCompanyToken,
@@ -1075,6 +1198,7 @@ module.exports = {
   findUserByUsername,
   publicUser,
   getOverviewStats,
+  getMasterOverview,
   registerOrUpdateDevice,
   touchHeartbeat,
   pullJobs,

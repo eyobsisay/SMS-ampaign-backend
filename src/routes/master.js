@@ -7,9 +7,49 @@ const {
   regenerateCompanyToken,
   deleteCompany,
   usersDictForCompany,
+  getMasterWorkspace,
+  publicCompany,
+  getMasterOverview,
+  getOverviewStats,
+  listCampaigns,
+  listDevices,
 } = require('../db/database');
 
 const router = express.Router();
+
+/**
+ * GET /api/master/overview
+ * Aggregate + per-company SMS stats for all tenants (and Master Workspace).
+ */
+router.get('/overview', (req, res) => {
+  try {
+    const overview = getMasterOverview();
+    return res.json({ success: true, ...overview });
+  } catch (err) {
+    console.error('master overview error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to load overview' });
+  }
+});
+
+/**
+ * GET /api/master/workspace
+ * Master's own SMS tenant (campaigns / groups / gateway token) — not a normal company.
+ */
+router.get('/workspace', (req, res) => {
+  try {
+    const workspace = getMasterWorkspace();
+    return res.json({
+      success: true,
+      workspace: {
+        ...publicCompany(workspace),
+        users: usersDictForCompany(workspace.id),
+      },
+    });
+  } catch (err) {
+    console.error('master workspace error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to load master workspace' });
+  }
+});
 
 /** GET /api/master/companies */
 router.get('/companies', (req, res) => {
@@ -35,6 +75,37 @@ router.post('/companies', (req, res) => {
   } catch (err) {
     console.error('create company error:', err);
     return res.status(400).json({ success: false, error: err.message || 'Failed to create company' });
+  }
+});
+
+/** GET /api/master/companies/:id/overview */
+router.get('/companies/:id/overview', (req, res) => {
+  try {
+    const company = getCompanyById(req.params.id);
+    if (!company) {
+      return res.status(404).json({ success: false, error: 'Company not found' });
+    }
+    const stats = getOverviewStats(company.id);
+    const userCount = Object.keys(usersDictForCompany(company.id)).length;
+    const devices = listDevices(company.id);
+    const campaigns = listCampaigns(company.id);
+    return res.json({
+      success: true,
+      company: {
+        id: company.id,
+        name: company.name,
+        isMasterWorkspace: !!company.isMasterWorkspace,
+        userCount,
+        deviceCount: devices.length,
+        createdAt: company.createdAt,
+      },
+      stats,
+      campaigns,
+      devices,
+    });
+  } catch (err) {
+    console.error('company overview error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to load company overview' });
   }
 });
 

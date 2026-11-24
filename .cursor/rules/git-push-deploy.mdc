@@ -1,0 +1,24 @@
+---
+description: Only commit/push/deploy when the user explicitly asks
+alwaysApply: true
+---
+
+# Git push & deploy — explicit only
+
+Never commit, push, or deploy unless the user clearly asks in that message.
+
+## Commands
+
+| User says | Do |
+|---|---|
+| **push** | `git push` only (commit first only if they also asked to commit, or there is already a commit to push) |
+| **push and deploy** / **push & deploy** / **deploy** | Push (if needed) **and** deploy to the VPS |
+| **commit** | Commit only — do not push or deploy |
+| Anything else / silent | Do **not** commit, push, or deploy |
+
+## Hard rules
+
+- **Do not deploy** unless the user says **deploy** (alone or with push).
+- Finishing a feature is **not** permission to push or deploy.
+- Do not “helpfully” push/deploy after commits.
+- If unclear whether they want deploy, ask — do not deploy.

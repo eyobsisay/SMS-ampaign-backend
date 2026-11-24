@@ -1,5 +1,5 @@
 const express = require('express');
-const { loginWithPassword } = require('../db/database');
+const { loginWithPassword, getMasterWorkspace, publicCompany } = require('../db/database');
 
 const router = express.Router();
 
@@ -31,10 +31,12 @@ router.post('/login', (req, res) => {
       username.toLowerCase() === String(masterUser).toLowerCase() &&
       password === masterPass
     ) {
+      const workspace = getMasterWorkspace();
       return res.json({
         success: true,
         mode: 'master',
         token: process.env.MASTER_ADMIN_TOKEN,
+        workspace: publicCompany(workspace),
         user: {
           username: masterUser,
           name: 'Master Admin',
