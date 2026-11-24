@@ -61,6 +61,7 @@ router.get('/companies/:id', (req, res) => {
 /**
  * PUT /api/master/companies/:id
  * Body: { name?, users?: [...], removeUserIds?: [...] }
+ * users[].username / users[].password can be updated (password optional = keep current)
  */
 router.put('/companies/:id', (req, res) => {
   try {
@@ -71,6 +72,58 @@ router.put('/companies/:id', (req, res) => {
     console.error('update company error:', err);
     const status = err.message === 'Company not found' ? 404 : 400;
     return res.status(status).json({ success: false, error: err.message || 'Failed to update company' });
+  }
+});
+
+/**
+ * PUT /api/master/companies/:id/users/:userId/credentials
+ * Body: { username?, password? } — master resets company user login
+ */
+router.put('/companies/:id/users/:userId/credentials', (req, res) => {
+  try {
+    const company = getCompanyById(req.params.id);
+    if (!company) {
+      return res.status(404).json({ success: false, error: 'Company not found' });
+    }
+    const users = usersDictForCompany(req.params.id);
+    const existing = users[req.params.userId];
+    if (!existing) {
+      return res.status(404).json({ success: false, error: 'User not found on this company' });
+    }
+
+    const { username, password } = req.body || {};
+    if (username === undefined && (password === undefined || password === '')) {
+      return res.status(400).json({
+        success: false,
+        error: 'Provide username and/or password to update',
+      });
+    }
+
+    const updated = updateCompany(req.params.id, {
+      users: [
+        {
+          id: existing.id,
+          name: existing.name,
+          email: existing.email,
+          role: existing.role,
+          username: username !== undefined ? username : existing.username,
+          ...(password ? { password } : {}),
+        },
+      ],
+    });
+
+    return res.json({
+      success: true,
+      user: updated.users[existing.id],
+      company: { id: updated.id, name: updated.name },
+    });
+  } catch (err) {
+    console.error('update credentials error:', err);
+    const status = err.message === 'Company not found' ? 404 : 400;
+    return res.status(status).json({
+      success: false,
+      error: err.message || 'Failed to update credentials',
+    });
   }
 });
 

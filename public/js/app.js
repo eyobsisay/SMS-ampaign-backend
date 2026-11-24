@@ -171,31 +171,36 @@
               class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-accent" />
           </div>
           <div>
-            <label class="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Username (for login)</label>
-            <input type="text" data-field="username" required minlength="3" placeholder="e.g. jane" value="${escapeHtml(user?.username || '')}"
-              class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-accent" />
-          </div>
-          <div>
             <label class="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Role</label>
             <select data-field="role" class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-accent">
               <option value="admin" ${user?.role === 'admin' || !user ? 'selected' : ''}>admin</option>
               <option value="member" ${user?.role === 'member' ? 'selected' : ''}>member</option>
             </select>
           </div>
-          <div>
-            <label class="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">${isNew ? 'Password' : 'New Password (optional)'}</label>
-            <div class="relative">
-              <input type="password" data-field="password" id="pw-${rowKey}" minlength="6" placeholder="${isNew ? 'min 6 characters' : 'leave blank to keep'}"
-                class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 pr-14 text-sm outline-none focus:border-accent" ${isNew ? 'required' : ''} />
-              <button type="button" data-toggle-password="pw-${rowKey}" class="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-medium text-slate-500 hover:text-ink-900 px-1">Show</button>
+        </div>
+        <div class="rounded-xl border border-amber-200 bg-amber-50/70 p-3 space-y-3">
+          <p class="text-xs font-semibold uppercase tracking-wide text-amber-800">Company login (username &amp; password)</p>
+          <div class="grid sm:grid-cols-2 gap-3">
+            <div class="sm:col-span-2">
+              <label class="block text-xs font-semibold uppercase tracking-wide text-slate-600 mb-1">Login username</label>
+              <input type="text" data-field="username" required minlength="3" placeholder="e.g. jane" value="${escapeHtml(user?.username || '')}"
+                class="w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm outline-none focus:border-accent" />
             </div>
-          </div>
-          <div>
-            <label class="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Confirm Password</label>
-            <div class="relative">
-              <input type="password" data-field="passwordConfirm" id="pwc-${rowKey}" minlength="6" placeholder="re-enter password"
-                class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 pr-14 text-sm outline-none focus:border-accent" ${isNew ? 'required' : ''} />
-              <button type="button" data-toggle-password="pwc-${rowKey}" class="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-medium text-slate-500 hover:text-ink-900 px-1">Show</button>
+            <div>
+              <label class="block text-xs font-semibold uppercase tracking-wide text-slate-600 mb-1">${isNew ? 'Password' : 'New password (optional)'}</label>
+              <div class="relative">
+                <input type="password" data-field="password" id="pw-${rowKey}" minlength="6" placeholder="${isNew ? 'min 6 characters' : 'leave blank to keep current'}"
+                  class="w-full rounded-lg border border-amber-200 bg-white px-3 py-2 pr-14 text-sm outline-none focus:border-accent" ${isNew ? 'required' : ''} />
+                <button type="button" data-toggle-password="pw-${rowKey}" class="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-medium text-slate-500 hover:text-ink-900 px-1">Show</button>
+              </div>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold uppercase tracking-wide text-slate-600 mb-1">Confirm password</label>
+              <div class="relative">
+                <input type="password" data-field="passwordConfirm" id="pwc-${rowKey}" minlength="6" placeholder="re-enter if changing"
+                  class="w-full rounded-lg border border-amber-200 bg-white px-3 py-2 pr-14 text-sm outline-none focus:border-accent" ${isNew ? 'required' : ''} />
+                <button type="button" data-toggle-password="pwc-${rowKey}" class="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-medium text-slate-500 hover:text-ink-900 px-1">Show</button>
+              </div>
             </div>
           </div>
         </div>
@@ -866,7 +871,7 @@
             <td class="px-5 py-3">${c.deviceCount || 0}</td>
             <td class="px-5 py-3"><code class="token-box text-slate-600">${escapeHtml(c.apiToken)}</code></td>
             <td class="px-5 py-3 whitespace-nowrap">
-              <button data-action="edit" class="text-xs font-medium text-ink-800 hover:underline mr-2">Edit</button>
+              <button data-action="edit" class="text-xs font-medium text-ink-800 hover:underline mr-2">Edit / login</button>
               <button data-action="regen" class="text-xs font-medium text-accent hover:underline mr-2">Regen token</button>
               <button data-action="delete" class="text-xs font-medium text-danger hover:underline">Delete</button>
             </td>
@@ -1431,7 +1436,7 @@
         }),
       });
       feedback.className = 'text-sm text-ok';
-      feedback.textContent = 'Company updated';
+      feedback.textContent = 'Company & login credentials saved';
       editRemovedUserIds = [];
       loadCompanies();
       setTimeout(() => hideEditCompany(), 800);

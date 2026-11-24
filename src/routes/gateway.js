@@ -6,6 +6,7 @@ const {
   batchUpdateStatuses,
   touchHeartbeat,
   resolveJobBatchSize,
+  MAX_JOB_BATCH_SIZE,
 } = require('../db/database');
 const { gatewayId } = require('../utils/ids');
 
@@ -61,17 +62,18 @@ router.get('/jobs', (req, res) => {
       });
     }
 
-    const configured = resolveJobBatchSize(req.company);
+    // Batch size comes from the APK (?limit=). Portal setting is fallback only.
     const requested = parseInt(req.query.limit, 10);
     const limit = Number.isFinite(requested)
-      ? Math.min(Math.max(requested, 1), configured)
-      : configured;
+      ? Math.min(Math.max(requested, 1), MAX_JOB_BATCH_SIZE)
+      : resolveJobBatchSize(req.company);
 
     const jobs = pullJobs(req.company.id, deviceIdentifier, limit);
 
     return res.json({
       success: true,
       jobs,
+      limit,
     });
   } catch (err) {
     console.error('jobs error:', err);
