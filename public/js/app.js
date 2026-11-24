@@ -55,7 +55,7 @@
   }
 
   /** In-app confirm (replaces window.confirm) — returns true/false */
-  function appConfirm(message, title = 'Confirm', { danger = false } = {}) {
+  function appConfirm(message, title = 'Confirm', { danger = false, confirmLabel } = {}) {
     return new Promise((resolve) => {
       const dialog = $('app-dialog');
       const cancelBtn = $('app-dialog-cancel');
@@ -63,7 +63,7 @@
       $('app-dialog-title').textContent = title;
       $('app-dialog-message').textContent = message;
       cancelBtn.classList.remove('hidden');
-      okBtn.textContent = danger ? 'Delete' : 'Confirm';
+      okBtn.textContent = confirmLabel || (danger ? 'Delete' : 'Confirm');
       okBtn.className = danger
         ? 'rounded-xl bg-danger hover:bg-red-700 text-white px-4 py-2 text-sm font-semibold'
         : 'rounded-xl bg-ink-900 hover:bg-ink-800 text-white px-4 py-2 text-sm font-semibold';
@@ -349,6 +349,7 @@
       $('create-feedback').textContent = '';
       $('create-feedback').className = 'text-sm';
     }
+    if ($('camp-status')) $('camp-status').value = 'INACTIVE';
     loadCampaignGroups();
     modal.classList.remove('hidden');
     $('camp-title')?.focus();
@@ -1011,9 +1012,10 @@
           <td class="px-4 py-3 text-emerald-600 font-medium">${c.delivered ?? 0}</td>
           <td class="px-4 py-3 text-red-600 font-medium">${c.failed ?? 0}</td>
           <td class="px-4 py-3 text-slate-500 whitespace-nowrap">${formatTime(c.createdAt)}</td>
-          <td class="px-4 py-3 whitespace-nowrap" onclick="event.stopPropagation()">
+          <td class="px-4 py-3 whitespace-nowrap">
             <button type="button" data-toggle-campaign="${escapeHtml(c.id)}" data-next-status="${isActive ? 'INACTIVE' : 'ACTIVE'}"
-              class="rounded-lg border border-slate-200 text-xs font-semibold px-2.5 py-1.5 hover:bg-slate-50">
+              class="rounded-lg border border-slate-200 text-xs font-semibold px-2.5 py-1.5 hover:bg-slate-50"
+              title="${isActive ? 'Pause: APK will not receive jobs from this campaign' : 'Activate: APK can pull queued jobs'}">
               ${isActive ? 'Pause' : 'Activate'}
             </button>
           </td>
@@ -1329,8 +1331,21 @@
       e.stopPropagation();
       const id = toggleBtn.getAttribute('data-toggle-campaign');
       const next = toggleBtn.getAttribute('data-next-status');
+      if (!id || !next) return;
+      const campaign = cachedCampaigns[id];
+      const title = campaign?.title || 'this campaign';
+      const pausing = next === 'INACTIVE';
+      const ok = await appConfirm(
+        pausing
+          ? `Pause “${title}”? The APK will stop receiving new jobs from this campaign. Processing jobs will return to Queued.`
+          : `Activate “${title}”? The APK will start pulling queued jobs from this campaign.`,
+        pausing ? 'Pause campaign' : 'Activate campaign',
+        { confirmLabel: pausing ? 'Pause' : 'Activate' }
+      );
+      if (!ok) return;
+      toggleBtn.disabled = true;
       try {
-        await api(`/api/admin/campaigns/${id}/status`, {
+        await api(`/api/admin/campaigns/${encodeURIComponent(id)}/status`, {
           method: 'PATCH',
           body: JSON.stringify({ status: next }),
         });
@@ -1339,6 +1354,7 @@
         loadOverview();
       } catch (err) {
         appAlert(err.message, 'Error');
+        toggleBtn.disabled = false;
       }
       return;
     }
@@ -1618,21 +1634,32 @@
       feedback.textContent = 'Select a contact group';
       return;
     }
+    const title = $('camp-title').value.trim();
+    const status = $('camp-status')?.value || 'INACTIVE';
+    const count = $('camp-group-count')?.textContent || '?';
+    const okCreate = await appConfirm(
+      status === 'ACTIVE'
+        ? `Create “${title}” and queue ${count} messages as Active? The APK can start pulling them immediately.`
+        : `Create “${title}” with ${count} messages as Inactive? Jobs stay queued until you Activate.`,
+      'Create campaign',
+      { confirmLabel: 'Create & Queue' }
+    );
+    if (!okCreate) return;
     btn.disabled = true;
     try {
       const data = await api('/api/admin/campaigns', {
         method: 'POST',
         body: JSON.stringify({
-          title: $('camp-title').value.trim(),
+          title,
           messageBody: bodyEl.value.trim(),
           groupId,
-          status: $('camp-status')?.value || 'ACTIVE',
+          status,
         }),
       });
       feedback.className = 'text-sm text-ok';
-      feedback.textContent = `Queued ${data.campaign.totalMessages} jobs · ${data.campaign.status || 'ACTIVE'}`;
+      feedback.textContent = `Queued ${data.campaign.totalMessages} jobs · ${data.campaign.status || 'INACTIVE'}`;
       $('campaign-form').reset();
-      if ($('camp-status')) $('camp-status').value = 'ACTIVE';
+      if ($('camp-status')) $('camp-status').value = 'INACTIVE';
       $('body-count').textContent = '0';
       $('camp-group-count').textContent = '0';
       closeCreateCampaignModal();

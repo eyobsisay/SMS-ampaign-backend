@@ -908,10 +908,18 @@ function pullJobs(companyIdValue, deviceIdentifier, limit) {
      LIMIT ?`
   );
 
+  // Claim only if still QUEUED and campaign is still ACTIVE (pause rejects mid-pull).
   const markProcessing = db.prepare(
     `UPDATE MessageJob
      SET status = 'PROCESSING', updatedAt = ?
-     WHERE id = ? AND status = 'QUEUED' AND companyId = ?`
+     WHERE id = ?
+       AND status = 'QUEUED'
+       AND companyId = ?
+       AND campaignId IN (
+         SELECT id FROM Campaign
+         WHERE companyId = ?
+           AND UPPER(COALESCE(status, 'ACTIVE')) = 'ACTIVE'
+       )`
   );
 
   return withTransaction(() => {
@@ -920,7 +928,7 @@ function pullJobs(companyIdValue, deviceIdentifier, limit) {
     const claimed = [];
 
     for (const row of rows) {
-      const result = markProcessing.run(now, row.id, companyIdValue);
+      const result = markProcessing.run(now, row.id, companyIdValue, companyIdValue);
       if (result.changes > 0) {
         claimed.push({
           id: row.id,
@@ -1086,9 +1094,9 @@ function createCampaign({
   messageBody,
   phones,
   recipientNames = [],
-  status = 'ACTIVE',
+  status = 'INACTIVE',
 }) {
-  const campaignStatus = normalizeCampaignStatus(status);
+  const campaignStatus = normalizeCampaignStatus(status ?? 'INACTIVE');
   const insertCampaign = db.prepare(
     `INSERT INTO Campaign (id, companyId, title, messageBody, totalMessages, status)
      VALUES (?, ?, ?, ?, ?, ?)`
@@ -1110,15 +1118,34 @@ function createCampaign({
 
 function setCampaignStatus(companyIdValue, campaignIdValue, status) {
   const campaignStatus = normalizeCampaignStatus(status);
-  const result = db
-    .prepare(
-      `UPDATE Campaign SET status = ? WHERE id = ? AND companyId = ?`
-    )
-    .run(campaignStatus, campaignIdValue, companyIdValue);
-  if (!result.changes) {
-    throw new Error('Campaign not found');
-  }
-  return getCampaign(companyIdValue, campaignIdValue);
+  return withTransaction(() => {
+    const result = db
+      .prepare(`UPDATE Campaign SET status = ? WHERE id = ? AND companyId = ?`)
+      .run(campaignStatus, campaignIdValue, companyIdValue);
+    if (!result.changes) {
+      throw new Error('Campaign not found');
+    }
+
+    // Pause rejects in-flight pulls: PROCESSING → QUEUED so APK won't keep new work.
+    // Jobs already on the phone may still finish; no further QUEUED jobs are handed out.
+    let reclaimed = 0;
+    if (campaignStatus === 'INACTIVE') {
+      const now = new Date().toISOString();
+      const reclaim = db
+        .prepare(
+          `UPDATE MessageJob
+           SET status = 'QUEUED', updatedAt = ?, failureReason = NULL
+           WHERE companyId = ?
+             AND campaignId = ?
+             AND status = 'PROCESSING'`
+        )
+        .run(now, companyIdValue, campaignIdValue);
+      reclaimed = reclaim.changes || 0;
+    }
+
+    const campaign = getCampaign(companyIdValue, campaignIdValue);
+    return { ...campaign, status: campaignStatus, reclaimedProcessing: reclaimed };
+  });
 }
 
 function listCampaigns(companyIdValue) {

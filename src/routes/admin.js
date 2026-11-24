@@ -250,7 +250,10 @@ router.post('/campaigns', (req, res) => {
     }
 
     const id = campaignId();
-    const campaignStatus = normalizeCampaignStatus(status);
+    // New campaigns default to INACTIVE until the user Activates them.
+    const campaignStatus = normalizeCampaignStatus(
+      status === undefined || status === null || status === '' ? 'INACTIVE' : status
+    );
     const result = createCampaign({
       companyId: req.company.id,
       id,
@@ -280,7 +283,8 @@ router.post('/campaigns', (req, res) => {
 /**
  * PATCH /api/admin/campaigns/:id/status
  * Body: { status: "ACTIVE" | "INACTIVE" }
- * Inactive campaigns are not pulled by the Android gateway.
+ * Only ACTIVE campaigns are pulled by the Android gateway.
+ * Pausing (INACTIVE) rejects further sends and requeues PROCESSING jobs.
  */
 router.patch('/campaigns/:id/status', (req, res) => {
   try {
