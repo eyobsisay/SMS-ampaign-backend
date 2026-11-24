@@ -118,11 +118,20 @@
         </nav>
         <div class="p-4 border-t border-white/10 space-y-2">
           <p class="text-xs text-slate-400 truncate">Signed in as <span id="signed-in-user" class="text-slate-200 font-medium">—</span></p>
+          <button id="back-to-master-btn" class="hidden w-full rounded-xl bg-amber-500/20 text-amber-100 border border-amber-400/30 text-sm font-medium px-3 py-2 hover:bg-amber-500/30 transition">Back to Master</button>
           <button id="logout-btn" class="w-full rounded-xl border border-white/10 text-sm font-medium px-3 py-2 hover:bg-white/5 transition">Sign out</button>
         </div>
       </aside>
 
       <div class="flex-1 min-w-0 flex flex-col">
+        <div id="master-acting-banner" class="hidden bg-amber-50 border-b border-amber-200 px-4 sm:px-6 py-2.5 flex flex-wrap items-center justify-between gap-2">
+          <p class="text-sm text-amber-900">
+            <span class="font-semibold">Master mode</span> — managing company
+            <span id="master-acting-company" class="font-semibold">—</span>
+            (full company portal access)
+          </p>
+          <button type="button" id="back-to-master-banner-btn" class="text-sm font-semibold text-amber-800 hover:text-amber-950 underline">Back to Master</button>
+        </div>
         <header class="sticky top-0 z-30 border-b border-slate-200/80 bg-white/90 backdrop-blur-md">
           <div class="px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -650,7 +659,7 @@
         <div class="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 class="font-display font-semibold text-lg">All Companies</h2>
-            <p class="text-sm text-slate-500">Each has separate campaigns, jobs, devices, and users</p>
+            <p class="text-sm text-slate-500">Use <span class="font-medium">Open portal</span> to run that company’s full dashboard (campaigns, groups, gateways, settings…)</p>
           </div>
           <div class="flex items-center gap-3">
             <button id="refresh-companies" class="text-sm font-medium text-accent hover:text-accent-dark">Refresh</button>
@@ -781,7 +790,7 @@
   </div>
 
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-  <script src="/js/app.js?v=sidebar-campaigns-1"></script>
+  <script src="/js/app.js?v=master-company-portal-1"></script>
 </body>
 </html>
 

@@ -2,6 +2,7 @@
   const TOKEN_KEY = 'sms_portal_token';
   const MODE_KEY = 'sms_portal_mode';
   const USER_KEY = 'sms_portal_user';
+  const MASTER_RETURN_KEY = 'sms_portal_master_return';
 
   let token = localStorage.getItem(TOKEN_KEY) || '';
   let mode = localStorage.getItem(MODE_KEY) || 'company';
@@ -16,6 +17,7 @@
   let currentView = 'overview';
   let companyUsers = {};
   let companyApiToken = '';
+  let actingAsMaster = false;
 
   const $ = (id) => document.getElementById(id);
 
@@ -107,6 +109,26 @@
     else localStorage.removeItem(USER_KEY);
   }
 
+  function getMasterReturn() {
+    try {
+      return JSON.parse(localStorage.getItem(MASTER_RETURN_KEY) || 'null');
+    } catch {
+      return null;
+    }
+  }
+
+  function updateMasterActingUi(companyName) {
+    const banner = $('master-acting-banner');
+    const backBtn = $('back-to-master-btn');
+    const hasReturn = !!getMasterReturn();
+    actingAsMaster = hasReturn;
+    if (banner) banner.classList.toggle('hidden', !hasReturn);
+    if (backBtn) backBtn.classList.toggle('hidden', !hasReturn);
+    if (hasReturn && $('master-acting-company')) {
+      $('master-acting-company').textContent = companyName || 'selected company';
+    }
+  }
+
   function unlockCompany() {
     authScreen.classList.add('hidden');
     masterApp.classList.add('hidden');
@@ -114,6 +136,7 @@
     if (signedInUser) {
       $('signed-in-user').textContent = signedInUser.username || signedInUser.name || '—';
     }
+    updateMasterActingUi(signedInUser?.companyName || $('company-name')?.textContent);
     startPolling();
     loadView(currentView);
   }
@@ -122,10 +145,53 @@
     authScreen.classList.add('hidden');
     app.classList.add('hidden');
     masterApp.classList.remove('hidden');
+    localStorage.removeItem(MASTER_RETURN_KEY);
+    actingAsMaster = false;
+    updateMasterActingUi();
     stopPolling();
     hideCreateCompany();
     hideEditCompany();
     loadCompanies();
+  }
+
+  /** Master opens a full company portal (campaigns, groups, gateways, etc.) */
+  async function openCompanyAsMaster(company) {
+    if (!company?.apiToken) {
+      throw new Error('Company API token missing');
+    }
+    if (mode === 'master' && token) {
+      localStorage.setItem(
+        MASTER_RETURN_KEY,
+        JSON.stringify({
+          token,
+          user: signedInUser,
+        })
+      );
+    }
+    persistSession(company.apiToken, 'company', {
+      username: 'master',
+      name: 'Master Admin',
+      companyName: company.name,
+    });
+    currentView = 'overview';
+    detailCampaignId = '';
+    await loadMe();
+    unlockCompany();
+    updateMasterActingUi(company.name);
+  }
+
+  function returnToMaster() {
+    const saved = getMasterReturn();
+    if (!saved?.token) {
+      lock();
+      return;
+    }
+    stopPolling();
+    persistSession(saved.token, 'master', saved.user || { username: 'master', name: 'Master Admin' });
+    localStorage.removeItem(MASTER_RETURN_KEY);
+    actingAsMaster = false;
+    updateMasterActingUi();
+    unlockMaster();
   }
 
   let editRemovedUserIds = [];
@@ -231,9 +297,12 @@
     signedInUser = null;
     companyUsers = {};
     companyApiToken = '';
+    actingAsMaster = false;
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(MODE_KEY);
     localStorage.removeItem(USER_KEY);
+    localStorage.removeItem(MASTER_RETURN_KEY);
+    updateMasterActingUi();
     stopPolling();
     app.classList.add('hidden');
     masterApp.classList.add('hidden');
@@ -925,6 +994,7 @@
             <td class="px-5 py-3">${c.deviceCount || 0}</td>
             <td class="px-5 py-3"><code class="token-box text-slate-600">${escapeHtml(c.apiToken)}</code></td>
             <td class="px-5 py-3 whitespace-nowrap">
+              <button data-action="open" class="text-xs font-semibold text-white bg-accent hover:bg-accent-dark rounded-lg px-2.5 py-1.5 mr-2">Open portal</button>
               <button data-action="edit" class="text-xs font-medium text-ink-800 hover:underline mr-2">Edit / login</button>
               <button data-action="regen" class="text-xs font-medium text-accent hover:underline mr-2">Regen token</button>
               <button data-action="delete" class="text-xs font-medium text-danger hover:underline">Delete</button>
@@ -971,6 +1041,8 @@
 
   $('logout-btn').addEventListener('click', lock);
   $('master-logout-btn').addEventListener('click', lock);
+  $('back-to-master-btn')?.addEventListener('click', returnToMaster);
+  $('back-to-master-banner-btn')?.addEventListener('click', returnToMaster);
 
   document.querySelectorAll('#app .nav-btn').forEach((btn) => {
     btn.addEventListener('click', () => switchView(btn.dataset.view));
@@ -1600,6 +1672,11 @@
     if (!id) return;
 
     try {
+      if (btn.dataset.action === 'open') {
+        const data = await api(`/api/master/companies/${id}`);
+        await openCompanyAsMaster(data.company);
+        return;
+      }
       if (btn.dataset.action === 'edit') {
         await openEditCompany(id);
       }
@@ -1637,7 +1714,13 @@
         .catch(() => lock());
     } else {
       loadMe()
-        .then(() => unlockCompany())
+        .then(() => {
+          unlockCompany();
+          const saved = getMasterReturn();
+          if (saved) {
+            updateMasterActingUi($('company-name')?.textContent || signedInUser?.companyName);
+          }
+        })
         .catch(() => lock());
     }
   }
