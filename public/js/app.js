@@ -713,10 +713,18 @@
     companyUsers = data.users || {};
     companyApiToken = data.company.apiToken || '';
     if ($('company-api-token')) $('company-api-token').textContent = companyApiToken || '—';
+    fillApkSetupCard();
     if ($('setting-job-batch-size') && data.company.jobBatchSize != null) {
       $('setting-job-batch-size').value = String(data.company.jobBatchSize);
     }
     return data;
+  }
+
+  function fillApkSetupCard() {
+    const origin = window.location.origin || 'https://sms.awedaybet.com';
+    const baseUrl = `${origin.replace(/\/$/, '')}/api/gateway`;
+    if ($('apk-setup-base-url')) $('apk-setup-base-url').textContent = baseUrl;
+    if ($('apk-setup-token')) $('apk-setup-token').textContent = companyApiToken || '—';
   }
 
   async function loadSettings() {
@@ -982,6 +990,14 @@
 
   async function loadCampaigns() {
     try {
+      fillApkSetupCard();
+      if (!companyApiToken) {
+        try {
+          await loadMe();
+        } catch (_) {
+          /* ignore */
+        }
+      }
       const campsRes = await api('/api/admin/campaigns');
       const tbody = $('campaigns-tbody');
       if (!tbody) return;
@@ -1208,6 +1224,18 @@
     btn.addEventListener('click', () => switchView(btn.dataset.view));
   });
 
+  $('copy-apk-setup')?.addEventListener('click', async () => {
+    fillApkSetupCard();
+    const baseUrl = $('apk-setup-base-url')?.textContent || '';
+    const token = companyApiToken || $('apk-setup-token')?.textContent || '';
+    const text = `Server Base URL: ${baseUrl}\nAPI Token: ${token}\nJobs Batch Size: 10\nSend delay: 2000 ms`;
+    try {
+      await navigator.clipboard.writeText(text);
+      await appAlert('Android setup copied. Paste into the APK Config screen.', 'Copied');
+    } catch {
+      await appAlert(text, 'Android setup');
+    }
+  });
   $('refresh-overview-page')?.addEventListener('click', loadOverview);
   $('refresh-all-overview')?.addEventListener('click', loadAllOverview);
   $('hide-company-overview')?.addEventListener('click', hideCompanyOverview);
