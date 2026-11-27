@@ -312,10 +312,8 @@
       }
       if (currentView === 'all-overview') loadAllOverview();
       if (currentView === 'overview') loadOverview();
-      if (currentView === 'campaigns') {
-        loadCampaigns();
-        if (detailCampaignId) loadCampaignDetail();
-      }
+      if (currentView === 'campaigns') loadCampaigns();
+      if (currentView === 'campaign-detail' && detailCampaignId) loadCampaignDetail();
       if (currentView === 'groups') loadGroups();
       if (currentView === 'monitor') loadMessages();
       if (currentView === 'gateways') loadDevices();
@@ -335,12 +333,111 @@
     'all-overview': 'All overview',
     overview: 'Overview',
     campaigns: 'Campaigns',
+    'campaign-detail': 'Campaign detail',
     groups: 'Contact Groups',
     monitor: 'Live Monitor',
     gateways: 'Gateways',
     users: 'Users',
     settings: 'Settings',
   };
+
+  let cachedDevices = [];
+
+  async function loadCampaignDeviceOptions(selectId, selectedId = '') {
+    const select = $(selectId);
+    if (!select) return;
+    try {
+      const data = await api('/api/admin/devices');
+      cachedDevices = data.devices || [];
+      const emptyLabel =
+        selectId === 'edit-camp-device'
+          ? 'No device — campaign will be Inactive'
+          : cachedDevices.length
+            ? 'Select a device…'
+            : 'No devices — register a gateway first';
+      if (!cachedDevices.length) {
+        select.innerHTML = `<option value="">${emptyLabel}</option>`;
+        select.value = '';
+        return;
+      }
+      select.innerHTML =
+        `<option value="">${emptyLabel}</option>` +
+        cachedDevices
+          .map(
+            (d) =>
+              `<option value="${escapeHtml(d.deviceIdentifier)}">${escapeHtml(
+                d.deviceName || d.deviceIdentifier
+              )}</option>`
+          )
+          .join('');
+      if (selectedId) select.value = selectedId;
+    } catch (err) {
+      console.error(err);
+      select.innerHTML = '<option value="">Select a device…</option>';
+    }
+  }
+
+  function closeEditCampaignModal() {
+    $('edit-campaign-modal')?.classList.add('hidden');
+  }
+
+  async function loadEditCampaignGroups() {
+    const select = $('edit-camp-group');
+    if (!select) return;
+    try {
+      const data = await api('/api/admin/groups');
+      cachedGroups = data.groups || [];
+      select.innerHTML = '<option value="">Keep current contacts</option>';
+      for (const g of cachedGroups) {
+        const opt = document.createElement('option');
+        opt.value = g.id;
+        opt.textContent = `${g.name} (${g.contactCount})`;
+        opt.dataset.count = String(g.contactCount);
+        select.appendChild(opt);
+      }
+    } catch (err) {
+      console.error(err);
+      select.innerHTML = '<option value="">Keep current contacts</option>';
+    }
+  }
+
+  async function openEditCampaign(campaignId) {
+    const campaign = cachedCampaigns[campaignId];
+    if (!campaign) return;
+    if ($('edit-camp-feedback')) {
+      $('edit-camp-feedback').textContent = '';
+      $('edit-camp-feedback').className = 'text-sm';
+    }
+    $('edit-camp-id').value = campaign.id;
+    $('edit-camp-title').value = campaign.title || '';
+    if ($('edit-camp-body')) $('edit-camp-body').value = campaign.messageBody || '';
+
+    const started =
+      (Number(campaign.processing) || 0) +
+      (Number(campaign.sent) || 0) +
+      (Number(campaign.delivered) || 0) +
+      (Number(campaign.failed) || 0);
+    const canChangeGroup = campaign.canChangeGroup === true || campaign.allQueued === true || started === 0;
+
+    const groupSelect = $('edit-camp-group');
+    const groupHint = $('edit-camp-group-hint');
+    const groupWrap = $('edit-camp-group-wrap');
+    if (groupSelect) {
+      await loadEditCampaignGroups();
+      groupSelect.value = '';
+      groupSelect.disabled = !canChangeGroup;
+      if (groupWrap) groupWrap.classList.toggle('opacity-60', !canChangeGroup);
+      if (groupHint) {
+        groupHint.textContent = canChangeGroup
+          ? 'Pick a group to replace all queued contacts with that group’s current list. Leave as Keep current to only update name/message/device.'
+          : 'Group/contacts locked — sending already started (not all Queued).';
+      }
+    }
+
+    await loadCampaignDeviceOptions('edit-camp-device', campaign.assignedDeviceIdentifier || '');
+    $('edit-campaign-modal')?.classList.remove('hidden');
+    $('edit-camp-title')?.focus();
+  }
 
   function openCreateCampaignModal() {
     const modal = $('create-campaign-modal');
@@ -351,6 +448,7 @@
     }
     if ($('camp-status')) $('camp-status').value = 'INACTIVE';
     loadCampaignGroups();
+    loadCampaignDeviceOptions('camp-device', '');
     modal.classList.remove('hidden');
     $('camp-title')?.focus();
   }
@@ -361,16 +459,57 @@
     modal.classList.add('hidden');
   }
 
+  function closeEditGroupModal() {
+    $('edit-group-modal')?.classList.add('hidden');
+  }
+
+  function openEditGroup(groupId) {
+    const group = cachedGroups.find((g) => g.id === groupId);
+    if (!group) return;
+    if ($('edit-group-feedback')) {
+      $('edit-group-feedback').textContent = '';
+      $('edit-group-feedback').className = 'text-sm';
+    }
+    $('edit-group-id').value = group.id;
+    $('edit-group-name').value = group.name || '';
+    $('edit-group-modal')?.classList.remove('hidden');
+    $('edit-group-name')?.focus();
+  }
+
+  function closeEditContactModal() {
+    $('edit-contact-modal')?.classList.add('hidden');
+  }
+
+  function openEditContact(contactId) {
+    const contact = cachedGroupContacts.find((c) => c.id === contactId);
+    if (!contact) return;
+    if ($('edit-contact-feedback')) {
+      $('edit-contact-feedback').textContent = '';
+      $('edit-contact-feedback').className = 'text-sm';
+    }
+    $('edit-contact-id').value = contact.id;
+    $('edit-contact-name').value = contact.name || '';
+    $('edit-contact-phone').value = contact.phoneNumber || '';
+    $('edit-contact-modal')?.classList.remove('hidden');
+    $('edit-contact-name')?.focus();
+  }
+
   function switchView(name) {
-    if (name === 'campaign-detail' || name === 'create') name = 'campaigns';
+    if (name === 'create') name = 'campaigns';
     currentView = name;
     document.querySelectorAll('#app .view').forEach((el) => el.classList.add('hidden'));
+    const navView = name === 'campaign-detail' ? 'campaigns' : name;
     document.querySelectorAll('#app .nav-btn').forEach((btn) => {
-      btn.classList.toggle('active', btn.dataset.view === name);
+      btn.classList.toggle('active', btn.dataset.view === navView);
     });
     const view = $(`view-${name}`);
     if (view) view.classList.remove('hidden');
-    if ($('page-title')) $('page-title').textContent = PAGE_TITLES[name] || 'Dashboard';
+    if ($('page-title')) {
+      $('page-title').textContent =
+        name === 'campaign-detail' && detailCampaignMeta?.title
+          ? detailCampaignMeta.title
+          : PAGE_TITLES[name] || 'Dashboard';
+    }
     loadView(name);
   }
 
@@ -381,13 +520,10 @@
     }
     if (name === 'all-overview') loadAllOverview();
     if (name === 'overview') loadOverview();
-    if (name === 'campaigns') {
-      loadCampaigns();
-      if (detailCampaignId) {
-        const panel = $('campaign-detail-panel');
-        if (panel) panel.classList.remove('hidden');
-        loadCampaignDetail();
-      }
+    if (name === 'campaigns') loadCampaigns();
+    if (name === 'campaign-detail') {
+      if (detailCampaignId) loadCampaignDetail();
+      else switchView('campaigns');
     }
     if (name === 'groups') loadGroups();
     if (name === 'monitor') loadMessages();
@@ -578,7 +714,8 @@
       <tr class="hover:bg-slate-50/80" data-contact-id="${escapeHtml(c.id)}">
         <td class="px-4 py-3">${escapeHtml(c.name || '—')}</td>
         <td class="px-4 py-3 font-mono text-xs">${escapeHtml(c.phoneNumber)}</td>
-        <td class="px-4 py-3 text-right">
+        <td class="px-4 py-3 text-right whitespace-nowrap">
+          <button data-c-action="edit" class="text-xs font-medium text-accent hover:underline mr-2">Edit</button>
           <button data-c-action="delete" class="text-xs font-medium text-danger hover:underline">Remove</button>
         </td>
       </tr>`
@@ -646,8 +783,17 @@
           </td>
           <td class="px-4 py-3">${g.contactCount}</td>
           <td class="px-4 py-3 whitespace-nowrap">
-            <button data-g-action="open" class="text-xs font-medium text-accent hover:underline mr-2">Open</button>
-            <button data-g-action="delete" class="text-xs font-medium text-danger hover:underline">Delete</button>
+            <div class="action-menu">
+              <button type="button" data-action-menu-toggle
+                class="rounded-lg border border-slate-200 text-xs font-semibold px-2.5 py-1.5 hover:bg-slate-50">
+                Actions ▾
+              </button>
+              <div class="action-menu-panel">
+                <button type="button" class="action-menu-item" data-g-action="open">Open</button>
+                <button type="button" class="action-menu-item" data-g-action="edit">Edit</button>
+                <button type="button" class="action-menu-item danger" data-g-action="delete">Delete</button>
+              </div>
+            </div>
           </td>
         </tr>`
         )
@@ -730,6 +876,16 @@
   async function loadSettings() {
     const statusEl = $('settings-status');
     try {
+      fillApkSetupCard();
+      if (!companyApiToken) {
+        try {
+          await loadMe();
+        } catch (_) {
+          /* ignore */
+        }
+      } else {
+        fillApkSetupCard();
+      }
       const data = await api('/api/admin/settings');
       const s = data.settings || {};
       const input = $('setting-job-batch-size');
@@ -793,26 +949,27 @@
   async function openCampaignDetail(campaign) {
     detailCampaignId = campaign.id;
     detailCampaignMeta = campaign;
-    $('detail-campaign-title').textContent = campaign.title || 'Campaign';
-    $('detail-campaign-id').textContent = campaign.id;
-    $('detail-stat-total').textContent = campaign.totalMessages ?? 0;
-    $('detail-stat-queued').textContent = campaign.queued ?? 0;
-    if ($('detail-stat-processing')) $('detail-stat-processing').textContent = campaign.processing ?? 0;
-    $('detail-stat-sent').textContent = campaign.sent ?? 0;
-    $('detail-stat-delivered').textContent = campaign.delivered ?? 0;
-    $('detail-stat-failed').textContent = campaign.failed ?? 0;
-    $('detail-search').value = '';
-    $('detail-status').value = '';
-    const panel = $('campaign-detail-panel');
-    if (panel) panel.classList.remove('hidden');
-    if (currentView !== 'campaigns') switchView('campaigns');
-    else {
-      document.querySelectorAll('#campaigns-tbody tr.campaign-row').forEach((row) => {
-        row.classList.toggle('selected', row.dataset.campaignId === campaign.id);
-      });
-      await loadCampaignDetail();
+    if ($('detail-campaign-title')) {
+      $('detail-campaign-title').textContent = campaign.title || 'Campaign';
     }
-    panel?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if ($('detail-campaign-id')) $('detail-campaign-id').textContent = campaign.id;
+    if ($('detail-stat-total')) $('detail-stat-total').textContent = campaign.totalMessages ?? 0;
+    if ($('detail-stat-queued')) $('detail-stat-queued').textContent = campaign.queued ?? 0;
+    if ($('detail-stat-processing')) {
+      $('detail-stat-processing').textContent = campaign.processing ?? 0;
+    }
+    if ($('detail-stat-sent')) $('detail-stat-sent').textContent = campaign.sent ?? 0;
+    if ($('detail-stat-delivered')) {
+      $('detail-stat-delivered').textContent = campaign.delivered ?? 0;
+    }
+    if ($('detail-stat-failed')) $('detail-stat-failed').textContent = campaign.failed ?? 0;
+    if ($('detail-search')) $('detail-search').value = '';
+    if ($('detail-status')) $('detail-status').value = '';
+    if ($('detail-requeue-feedback')) {
+      $('detail-requeue-feedback').textContent = '';
+      $('detail-requeue-feedback').className = 'text-sm text-slate-500';
+    }
+    switchView('campaign-detail');
   }
 
   async function loadCampaignDetail() {
@@ -990,37 +1147,48 @@
 
   async function loadCampaigns() {
     try {
-      fillApkSetupCard();
-      if (!companyApiToken) {
-        try {
-          await loadMe();
-        } catch (_) {
-          /* ignore */
-        }
-      }
       const campsRes = await api('/api/admin/campaigns');
       const tbody = $('campaigns-tbody');
       if (!tbody) return;
       cachedCampaigns = {};
       for (const c of campsRes.campaigns) cachedCampaigns[c.id] = c;
 
+      if (!cachedDevices.length) {
+        try {
+          const devicesRes = await api('/api/admin/devices');
+          cachedDevices = devicesRes.devices || [];
+        } catch (_) {
+          cachedDevices = [];
+        }
+      }
+
       if (!campsRes.campaigns.length) {
         tbody.innerHTML =
-          '<tr><td colspan="10" class="px-5 py-8 text-center text-slate-400">No campaigns yet for this company.</td></tr>';
+          '<tr><td colspan="11" class="px-5 py-8 text-center text-slate-400">No campaigns yet for this company.</td></tr>';
         return;
       }
       tbody.innerHTML = campsRes.campaigns
         .map((c) => {
           const status = String(c.status || 'ACTIVE').toUpperCase();
           const isActive = status === 'ACTIVE';
-          const selected = detailCampaignId === c.id ? 'selected' : '';
+          const deviceLabel = c.assignedDeviceName || c.assignedDeviceIdentifier || 'No device';
           return `
-        <tr class="campaign-row hover:bg-teal-50/50 cursor-pointer ${selected}" data-campaign-id="${escapeHtml(c.id)}" data-open-campaign="${escapeHtml(c.id)}" title="Click to view phone statuses">
+        <tr class="campaign-row hover:bg-teal-50/50 cursor-pointer" data-campaign-id="${escapeHtml(c.id)}" data-open-campaign="${escapeHtml(c.id)}" title="Open campaign detail">
           <td class="px-4 py-3">
             <div class="font-medium text-ink-900">${escapeHtml(c.title)}</div>
             <div class="text-xs text-slate-400 font-mono">${escapeHtml(c.id)}</div>
           </td>
           <td class="px-4 py-3">${campaignStatusBadge(status)}</td>
+          <td class="px-4 py-3">
+            <div class="text-sm font-medium truncate max-w-[140px]">${escapeHtml(deviceLabel)}</div>
+            ${
+              c.assignedDeviceIdentifier
+                ? `<div class="text-[10px] text-slate-400 font-mono truncate max-w-[140px]">${escapeHtml(
+                    c.assignedDeviceIdentifier
+                  )}</div>`
+                : '<div class="text-[10px] text-danger">Assign a device</div>'
+            }
+          </td>
           <td class="px-4 py-3">${c.totalMessages}</td>
           <td class="px-4 py-3 text-amber-600 font-medium">${c.queued ?? 0}</td>
           <td class="px-4 py-3 text-sky-600 font-medium">${c.processing ?? 0}</td>
@@ -1029,11 +1197,29 @@
           <td class="px-4 py-3 text-red-600 font-medium">${c.failed ?? 0}</td>
           <td class="px-4 py-3 text-slate-500 whitespace-nowrap">${formatTime(c.createdAt)}</td>
           <td class="px-4 py-3 whitespace-nowrap">
-            <button type="button" data-toggle-campaign="${escapeHtml(c.id)}" data-next-status="${isActive ? 'INACTIVE' : 'ACTIVE'}"
-              class="rounded-lg border border-slate-200 text-xs font-semibold px-2.5 py-1.5 hover:bg-slate-50"
-              title="${isActive ? 'Pause: APK will not receive jobs from this campaign' : 'Activate: APK can pull queued jobs'}">
-              ${isActive ? 'Pause' : 'Activate'}
-            </button>
+            <div class="action-menu">
+              <button type="button" data-action-menu-toggle
+                class="rounded-lg border border-slate-200 text-xs font-semibold px-2.5 py-1.5 hover:bg-slate-50">
+                Actions ▾
+              </button>
+              <div class="action-menu-panel">
+                <button type="button" class="action-menu-item" data-edit-campaign="${escapeHtml(c.id)}">Edit</button>
+                ${
+                  isActive
+                    ? `<button type="button" class="action-menu-item" data-toggle-campaign="${escapeHtml(
+                        c.id
+                      )}" data-next-status="INACTIVE">Pause</button>`
+                    : c.assignedDeviceIdentifier
+                      ? `<button type="button" class="action-menu-item" data-toggle-campaign="${escapeHtml(
+                          c.id
+                        )}" data-next-status="ACTIVE">Activate</button>`
+                      : `<button type="button" class="action-menu-item" disabled title="Assign a gateway device (Edit) before activating">Activate</button>`
+                }
+                <button type="button" class="action-menu-item danger" data-delete-campaign="${escapeHtml(
+                  c.id
+                )}">Delete</button>
+              </div>
+            </div>
           </td>
         </tr>`;
         })
@@ -1085,7 +1271,9 @@
   async function loadDevices() {
     try {
       const data = await api('/api/admin/devices');
+      cachedDevices = data.devices || [];
       const tbody = $('devices-tbody');
+      if (!tbody) return;
 
       if (!data.devices.length) {
         tbody.innerHTML =
@@ -1215,25 +1403,296 @@
 
   $('logout-btn').addEventListener('click', lock);
 
+  function closeAllActionMenus(except = null) {
+    document.querySelectorAll('.action-menu.open').forEach((menu) => {
+      if (menu === except) return;
+      menu.classList.remove('open');
+      const panel = menu.querySelector('.action-menu-panel');
+      if (panel) {
+        panel.style.top = '';
+        panel.style.left = '';
+        panel.style.right = '';
+      }
+    });
+  }
+
+  function positionActionMenu(menu, toggle) {
+    const panel = menu.querySelector('.action-menu-panel');
+    if (!panel) return;
+    const rect = toggle.getBoundingClientRect();
+    const menuWidth = 152;
+    let left = rect.right - menuWidth;
+    if (left < 8) left = 8;
+    if (left + menuWidth > window.innerWidth - 8) {
+      left = Math.max(8, window.innerWidth - menuWidth - 8);
+    }
+    let top = rect.bottom + 4;
+    panel.style.left = `${left}px`;
+    panel.style.right = 'auto';
+    panel.style.top = `${top}px`;
+    // After shown, flip upward if it would go off-screen
+    requestAnimationFrame(() => {
+      const h = panel.offsetHeight || 120;
+      if (top + h > window.innerHeight - 8 && rect.top - 4 - h > 8) {
+        panel.style.top = `${rect.top - 4 - h}px`;
+      }
+    });
+  }
+
+  // Capture phase so row stopPropagation can't block the menu toggle
+  document.addEventListener(
+    'click',
+    (e) => {
+      const toggle = e.target.closest('[data-action-menu-toggle]');
+      if (toggle) {
+        e.preventDefault();
+        e.stopPropagation();
+        const menu = toggle.closest('.action-menu');
+        if (!menu) return;
+        const willOpen = !menu.classList.contains('open');
+        closeAllActionMenus();
+        if (willOpen) {
+          menu.classList.add('open');
+          positionActionMenu(menu, toggle);
+        }
+        return;
+      }
+      if (e.target.closest('.action-menu-item')) {
+        // Close after the row/table handlers run on bubble.
+        setTimeout(() => closeAllActionMenus(), 0);
+        return;
+      }
+      if (!e.target.closest('.action-menu-panel')) {
+        closeAllActionMenus();
+      }
+    },
+    true
+  );
+
+  window.addEventListener('scroll', () => closeAllActionMenus(), true);
+  window.addEventListener('resize', () => closeAllActionMenus());
+
   $('open-create-campaign')?.addEventListener('click', openCreateCampaignModal);
   $('close-create-campaign')?.addEventListener('click', closeCreateCampaignModal);
   $('cancel-create-campaign')?.addEventListener('click', closeCreateCampaignModal);
   $('create-campaign-backdrop')?.addEventListener('click', closeCreateCampaignModal);
 
+  $('close-edit-campaign')?.addEventListener('click', closeEditCampaignModal);
+  $('cancel-edit-campaign')?.addEventListener('click', closeEditCampaignModal);
+  $('edit-campaign-backdrop')?.addEventListener('click', closeEditCampaignModal);
+
+  $('close-edit-group')?.addEventListener('click', closeEditGroupModal);
+  $('cancel-edit-group')?.addEventListener('click', closeEditGroupModal);
+  $('edit-group-backdrop')?.addEventListener('click', closeEditGroupModal);
+
+  $('edit-group-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const feedback = $('edit-group-feedback');
+    const id = $('edit-group-id')?.value;
+    const name = $('edit-group-name')?.value.trim();
+    if (!id) return;
+    if (!name) {
+      if (feedback) {
+        feedback.className = 'text-sm text-danger';
+        feedback.textContent = 'Group name is required';
+      }
+      return;
+    }
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.disabled = true;
+    try {
+      await api(`/api/admin/groups/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ name }),
+      });
+      closeEditGroupModal();
+      await loadGroups();
+      if (selectedGroupId === id) openGroup(id);
+    } catch (err) {
+      if (feedback) {
+        feedback.className = 'text-sm text-danger';
+        feedback.textContent = err.message || 'Save failed';
+      }
+    } finally {
+      if (submitBtn) submitBtn.disabled = false;
+    }
+  });
+
+  $('close-edit-contact')?.addEventListener('click', closeEditContactModal);
+  $('cancel-edit-contact')?.addEventListener('click', closeEditContactModal);
+  $('edit-contact-backdrop')?.addEventListener('click', closeEditContactModal);
+
+  $('edit-contact-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const feedback = $('edit-contact-feedback');
+    const id = $('edit-contact-id')?.value;
+    const name = $('edit-contact-name')?.value.trim();
+    const phoneNumber = $('edit-contact-phone')?.value.trim();
+    if (!id) return;
+    if (!phoneNumber) {
+      if (feedback) {
+        feedback.className = 'text-sm text-danger';
+        feedback.textContent = 'Phone is required';
+      }
+      return;
+    }
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.disabled = true;
+    try {
+      await api(`/api/admin/contacts/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ name, phoneNumber }),
+      });
+      closeEditContactModal();
+      if (selectedGroupId) openGroup(selectedGroupId);
+    } catch (err) {
+      if (feedback) {
+        feedback.className = 'text-sm text-danger';
+        feedback.textContent = err.message || 'Save failed';
+      }
+    } finally {
+      if (submitBtn) submitBtn.disabled = false;
+    }
+  });
+
+  $('edit-campaign-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const feedback = $('edit-camp-feedback');
+    const id = $('edit-camp-id')?.value;
+    const title = $('edit-camp-title')?.value.trim();
+    const messageBody = $('edit-camp-body')?.value.trim() || '';
+    const assignedDeviceIdentifier = $('edit-camp-device')?.value || '';
+    const groupId = $('edit-camp-group')?.disabled ? '' : $('edit-camp-group')?.value || '';
+    if (!id) return;
+    if (!title) {
+      if (feedback) {
+        feedback.className = 'text-sm text-danger';
+        feedback.textContent = 'Campaign name is required';
+      }
+      return;
+    }
+    if (!messageBody) {
+      if (feedback) {
+        feedback.className = 'text-sm text-danger';
+        feedback.textContent = 'Message is required';
+      }
+      return;
+    }
+    const deviceLabel = assignedDeviceIdentifier
+      ? cachedDevices.find((d) => d.deviceIdentifier === assignedDeviceIdentifier)?.deviceName ||
+        assignedDeviceIdentifier
+      : null;
+    const groupOpt = groupId
+      ? $('edit-camp-group')?.selectedOptions?.[0]?.textContent || 'selected group'
+      : null;
+    let confirmMsg = `Save “${title}”?`;
+    if (groupOpt) {
+      confirmMsg += ` Replace all contacts with “${groupOpt}”.`;
+    } else {
+      confirmMsg += ' Keep current contacts.';
+    }
+    confirmMsg += deviceLabel
+      ? ` Device: ${deviceLabel}.`
+      : ' No gateway (Inactive).';
+    confirmMsg += ' Queued jobs get the new message text.';
+    const ok = await appConfirm(confirmMsg, 'Save campaign', { confirmLabel: 'Save' });
+    if (!ok) return;
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.disabled = true;
+    try {
+      const body = {
+        title,
+        messageBody,
+        assignedDeviceIdentifier: assignedDeviceIdentifier || null,
+      };
+      if (groupId) body.groupId = groupId;
+      await api(`/api/admin/campaigns/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      });
+      if (feedback) {
+        feedback.className = 'text-sm text-ok';
+        feedback.textContent = 'Saved';
+      }
+      closeEditCampaignModal();
+      await loadCampaigns();
+      if (detailCampaignId === id) loadCampaignDetail();
+    } catch (err) {
+      if (feedback) {
+        feedback.className = 'text-sm text-danger';
+        feedback.textContent = err.message || 'Save failed';
+      }
+    } finally {
+      if (submitBtn) submitBtn.disabled = false;
+    }
+  });
+
   document.querySelectorAll('#app .nav-btn').forEach((btn) => {
     btn.addEventListener('click', () => switchView(btn.dataset.view));
   });
+
+  async function copyText(text, okMessage = 'Copied') {
+    try {
+      await navigator.clipboard.writeText(text);
+      await appAlert(okMessage, 'Copied');
+    } catch {
+      await appAlert(text, 'Copy');
+    }
+  }
 
   $('copy-apk-setup')?.addEventListener('click', async () => {
     fillApkSetupCard();
     const baseUrl = $('apk-setup-base-url')?.textContent || '';
     const token = companyApiToken || $('apk-setup-token')?.textContent || '';
-    const text = `Server Base URL: ${baseUrl}\nAPI Token: ${token}\nJobs Batch Size: 10\nSend delay: 2000 ms`;
+    const text = [
+      'Android app settings',
+      `Server Base URL: ${baseUrl}`,
+      `API Token (Bearer): ${token}`,
+      'Jobs Batch Size: 5–10 recommended (APK setting, max 50)',
+      'Send delay: 2000 ms between SMS (APK setting)',
+      '',
+      'Steps:',
+      '1. Open APK Config screen',
+      '2. Set Server Base URL and API Token',
+      '3. Set batch size 5–10 and send delay 2000 ms',
+      '4. Test & Register',
+      '5. Activate a campaign in the portal (defaults Inactive)',
+    ].join('\n');
+    await copyText(text, 'Full Android setup copied.');
+  });
+
+  document.querySelector('#view-settings')?.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-copy-apk]');
+    if (!btn) return;
+    fillApkSetupCard();
+    const which = btn.getAttribute('data-copy-apk');
+    if (which === 'base-url') {
+      await copyText($('apk-setup-base-url')?.textContent || '', 'Server Base URL copied.');
+    } else if (which === 'token') {
+      await copyText(companyApiToken || $('apk-setup-token')?.textContent || '', 'API token copied.');
+    }
+  });
+
+  $('regen-apk-token')?.addEventListener('click', async () => {
+    const ok = await appConfirm(
+      'Regenerate API token? The Android app must be updated with the new token. The old token will stop working immediately.',
+      'Regenerate token',
+      { danger: true, confirmLabel: 'Regenerate' }
+    );
+    if (!ok) return;
     try {
-      await navigator.clipboard.writeText(text);
-      await appAlert('Android setup copied. Paste into the APK Config screen.', 'Copied');
-    } catch {
-      await appAlert(text, 'Android setup');
+      const data = await api('/api/admin/regenerate-token', { method: 'POST' });
+      const newToken = data.company?.apiToken || '';
+      companyApiToken = newToken;
+      if (mode === 'master') {
+        workspaceToken = newToken;
+        if (workspaceToken) localStorage.setItem(WORKSPACE_TOKEN_KEY, workspaceToken);
+      }
+      fillApkSetupCard();
+      if ($('company-api-token')) $('company-api-token').textContent = newToken || '—';
+      await appAlert(`New API token:\n${newToken}\n\nUpdate the APK Config screen with this token.`, 'Token regenerated');
+    } catch (err) {
+      await appAlert(err.message, 'Error');
     }
   });
   $('refresh-overview-page')?.addEventListener('click', loadOverview);
@@ -1256,9 +1715,9 @@
   });
   $('refresh-overview')?.addEventListener('click', () => {
     loadCampaigns();
-    if (detailCampaignId) loadCampaignDetail();
   });
   $('refresh-campaign-detail')?.addEventListener('click', loadCampaignDetail);
+  $('back-to-campaigns')?.addEventListener('click', () => switchView('campaigns'));
   document.querySelectorAll('.jump-campaigns').forEach((btn) => {
     btn.addEventListener('click', () => switchView('campaigns'));
   });
@@ -1353,6 +1812,15 @@
   });
 
   $('campaigns-tbody')?.addEventListener('click', async (e) => {
+    const editBtn = e.target.closest('[data-edit-campaign]');
+    if (editBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const id = editBtn.getAttribute('data-edit-campaign');
+      if (id) await openEditCampaign(id);
+      return;
+    }
+
     const toggleBtn = e.target.closest('[data-toggle-campaign]');
     if (toggleBtn) {
       e.preventDefault();
@@ -1363,6 +1831,13 @@
       const campaign = cachedCampaigns[id];
       const title = campaign?.title || 'this campaign';
       const pausing = next === 'INACTIVE';
+      if (!pausing && !String(campaign?.assignedDeviceIdentifier || '').trim()) {
+        await appAlert(
+          'Assign a gateway device before activating this campaign. Use Edit to set the device.',
+          'Device required'
+        );
+        return;
+      }
       const ok = await appConfirm(
         pausing
           ? `Pause “${title}”? The APK will stop receiving new jobs from this campaign. Processing jobs will return to Queued.`
@@ -1386,6 +1861,41 @@
       }
       return;
     }
+
+    const deleteBtn = e.target.closest('[data-delete-campaign]');
+    if (deleteBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const id = deleteBtn.getAttribute('data-delete-campaign');
+      if (!id) return;
+      const campaign = cachedCampaigns[id];
+      const title = campaign?.title || 'this campaign';
+      const total = campaign?.totalMessages ?? 0;
+      const ok = await appConfirm(
+        `Delete “${title}”? This removes the campaign and all ${total} message job(s). This cannot be undone.`,
+        'Delete campaign',
+        { danger: true, confirmLabel: 'Delete' }
+      );
+      if (!ok) return;
+      deleteBtn.disabled = true;
+      try {
+        await api(`/api/admin/campaigns/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        if (detailCampaignId === id) {
+          detailCampaignId = '';
+          detailCampaignMeta = null;
+          if (currentView === 'campaign-detail') switchView('campaigns');
+        }
+        await loadCampaigns();
+        loadOverview();
+      } catch (err) {
+        appAlert(err.message, 'Error');
+        deleteBtn.disabled = false;
+      }
+      return;
+    }
+
+    if (e.target.closest('.action-menu')) return;
+
     const row = e.target.closest('[data-open-campaign]');
     if (!row) return;
     const id = row.getAttribute('data-open-campaign');
@@ -1558,6 +2068,9 @@
       if (btn.dataset.gAction === 'open') {
         openGroup(id);
       }
+      if (btn.dataset.gAction === 'edit') {
+        openEditGroup(id);
+      }
       if (btn.dataset.gAction === 'delete') {
         const ok = await appConfirm(
           'Delete this group AND all contacts inside it? This cannot be undone.',
@@ -1590,6 +2103,12 @@
   });
 
   $('contacts-tbody').addEventListener('click', async (e) => {
+    const editBtn = e.target.closest('button[data-c-action="edit"]');
+    if (editBtn) {
+      const contactId = editBtn.closest('tr')?.dataset.contactId;
+      if (contactId) openEditContact(contactId);
+      return;
+    }
     const btn = e.target.closest('button[data-c-action="delete"]');
     if (!btn) return;
     const contactId = btn.closest('tr')?.dataset.contactId;
@@ -1664,11 +2183,20 @@
     }
     const title = $('camp-title').value.trim();
     const status = $('camp-status')?.value || 'INACTIVE';
+    const assignedDeviceIdentifier = $('camp-device')?.value || '';
+    if (!assignedDeviceIdentifier) {
+      feedback.className = 'text-sm text-danger';
+      feedback.textContent = 'Select a gateway device';
+      return;
+    }
     const count = $('camp-group-count')?.textContent || '?';
+    const deviceLabel =
+      cachedDevices.find((d) => d.deviceIdentifier === assignedDeviceIdentifier)?.deviceName ||
+      assignedDeviceIdentifier;
     const okCreate = await appConfirm(
       status === 'ACTIVE'
-        ? `Create “${title}” and queue ${count} messages as Active? The APK can start pulling them immediately.`
-        : `Create “${title}” with ${count} messages as Inactive? Jobs stay queued until you Activate.`,
+        ? `Create “${title}” (${count} messages) as Active on ${deviceLabel}? Pulls can start immediately.`
+        : `Create “${title}” (${count} messages) as Inactive on ${deviceLabel}? Activate later to allow pulls.`,
       'Create campaign',
       { confirmLabel: 'Create & Queue' }
     );
@@ -1682,20 +2210,19 @@
           messageBody: bodyEl.value.trim(),
           groupId,
           status,
+          assignedDeviceIdentifier,
         }),
       });
       feedback.className = 'text-sm text-ok';
       feedback.textContent = `Queued ${data.campaign.totalMessages} jobs · ${data.campaign.status || 'INACTIVE'}`;
       $('campaign-form').reset();
       if ($('camp-status')) $('camp-status').value = 'INACTIVE';
+      if ($('camp-device')) $('camp-device').value = '';
       $('body-count').textContent = '0';
       $('camp-group-count').textContent = '0';
       closeCreateCampaignModal();
       switchView('campaigns');
       loadCampaigns();
-      if (data.campaign?.id && cachedCampaigns) {
-        // list refresh will populate cache
-      }
     } catch (err) {
       feedback.className = 'text-sm text-danger';
       feedback.textContent = err.message;

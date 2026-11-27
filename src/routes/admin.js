@@ -3,6 +3,9 @@ const {
   getOverviewStats,
   createCampaign,
   setCampaignStatus,
+  setCampaignDevice,
+  updateCampaign,
+  deleteCampaign,
   normalizeCampaignStatus,
   listCampaigns,
   listMessages,
@@ -18,9 +21,12 @@ const {
   listContacts,
   importContactsToGroup,
   getGroupRecipients,
+  updateContact,
   deleteContact,
   resolveJobBatchSize,
   updateCompanySettings,
+  regenerateCompanyToken,
+  publicCompany,
   MAX_JOB_BATCH_SIZE,
   DEFAULT_JOB_BATCH_SIZE,
   requeueMessages,
@@ -139,6 +145,27 @@ router.get('/settings', (req, res) => {
 });
 
 /**
+ * POST /api/admin/regenerate-token
+ * Rotates this company's Android gateway API token.
+ */
+router.post('/regenerate-token', (req, res) => {
+  try {
+    const company = regenerateCompanyToken(req.company.id);
+    if (!company) {
+      return res.status(404).json({ success: false, error: 'Company not found' });
+    }
+    req.company.apiToken = company.apiToken;
+    return res.json({
+      success: true,
+      company: publicCompany(company),
+    });
+  } catch (err) {
+    console.error('regenerate token error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to regenerate token' });
+  }
+});
+
+/**
  * PATCH /api/admin/settings
  * Body: { jobBatchSize: number }  // 1..50 — jobs returned per gateway pull
  */
@@ -216,7 +243,15 @@ router.get('/campaigns/:id', (req, res) => {
  */
 router.post('/campaigns', (req, res) => {
   try {
-    const { title, messageBody, phoneNumbers, recipients, groupId, status } = req.body || {};
+    const {
+      title,
+      messageBody,
+      phoneNumbers,
+      recipients,
+      groupId,
+      status,
+      assignedDeviceIdentifier,
+    } = req.body || {};
 
     if (!title || !String(title).trim()) {
       return res.status(400).json({ success: false, error: 'title is required' });
@@ -254,6 +289,13 @@ router.post('/campaigns', (req, res) => {
     const campaignStatus = normalizeCampaignStatus(
       status === undefined || status === null || status === '' ? 'INACTIVE' : status
     );
+    if (!assignedDeviceIdentifier || !String(assignedDeviceIdentifier).trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'A gateway device is required',
+      });
+    }
+
     const result = createCampaign({
       companyId: req.company.id,
       id,
@@ -262,6 +304,7 @@ router.post('/campaigns', (req, res) => {
       phones,
       recipientNames: names,
       status: campaignStatus,
+      assignedDeviceIdentifier,
     });
 
     return res.status(201).json({
@@ -271,12 +314,54 @@ router.post('/campaigns', (req, res) => {
         title: String(title).trim(),
         totalMessages: result.totalMessages,
         status: result.status,
+        assignedDeviceIdentifier: result.assignedDeviceIdentifier || null,
         groupId: groupId || null,
       },
     });
   } catch (err) {
     console.error('create campaign error:', err);
-    return res.status(500).json({ success: false, error: 'Failed to create campaign' });
+    const bad =
+      err.message === 'Assigned device not found for this company' ||
+      err.message === 'A gateway device is required';
+    return res.status(bad ? 400 : 500).json({
+      success: false,
+      error: bad ? err.message : 'Failed to create campaign',
+    });
+  }
+});
+
+/**
+ * PUT /api/admin/campaigns/:id
+ * Body: { title?, messageBody?, assignedDeviceIdentifier?, groupId? }
+ * groupId replaces contacts only when all jobs are still Queued.
+ */
+router.put('/campaigns/:id', (req, res) => {
+  try {
+    const { title, messageBody, assignedDeviceIdentifier, groupId } = req.body || {};
+    if (
+      title === undefined &&
+      messageBody === undefined &&
+      assignedDeviceIdentifier === undefined &&
+      groupId === undefined
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: 'Provide title, messageBody, assignedDeviceIdentifier, and/or groupId',
+      });
+    }
+    const campaign = updateCampaign(req.company.id, req.params.id, {
+      title,
+      messageBody,
+      assignedDeviceIdentifier,
+      groupId,
+    });
+    return res.json({ success: true, campaign });
+  } catch (err) {
+    const code =
+      err.message === 'Campaign not found' || err.message === 'Contact group not found'
+        ? 404
+        : 400;
+    return res.status(code).json({ success: false, error: err.message });
   }
 });
 
@@ -291,6 +376,51 @@ router.patch('/campaigns/:id/status', (req, res) => {
     const status = normalizeCampaignStatus((req.body || {}).status);
     const campaign = setCampaignStatus(req.company.id, req.params.id, status);
     return res.json({ success: true, campaign });
+  } catch (err) {
+    const code = err.message === 'Campaign not found' ? 404 : 400;
+    return res.status(code).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * PATCH /api/admin/campaigns/:id/device
+ * Body: { assignedDeviceIdentifier: string } — required registered gateway.
+ */
+router.patch('/campaigns/:id/device', (req, res) => {
+  try {
+    const assignedDeviceIdentifier = (req.body || {}).assignedDeviceIdentifier;
+    if (!assignedDeviceIdentifier || !String(assignedDeviceIdentifier).trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'A gateway device is required',
+      });
+    }
+    const campaign = setCampaignDevice(
+      req.company.id,
+      req.params.id,
+      assignedDeviceIdentifier
+    );
+    return res.json({ success: true, campaign });
+  } catch (err) {
+    const code =
+      err.message === 'Campaign not found'
+        ? 404
+        : err.message === 'Assigned device not found for this company' ||
+            err.message === 'A gateway device is required'
+          ? 400
+          : 400;
+    return res.status(code).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * DELETE /api/admin/campaigns/:id
+ * Deletes the campaign and all its message jobs.
+ */
+router.delete('/campaigns/:id', (req, res) => {
+  try {
+    const result = deleteCampaign(req.company.id, req.params.id);
+    return res.json({ success: true, ...result });
   } catch (err) {
     const code = err.message === 'Campaign not found' ? 404 : 400;
     return res.status(code).json({ success: false, error: err.message });
@@ -469,6 +599,33 @@ router.post('/groups/:id/import', (req, res) => {
     return res.json({ success: true, ...result });
   } catch (err) {
     const status = err.message === 'Group not found' ? 404 : 400;
+    return res.status(status).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * PUT /api/admin/contacts/:id
+ * Body: { name?, phoneNumber? }
+ */
+router.put('/contacts/:id', (req, res) => {
+  try {
+    const { name, phoneNumber } = req.body || {};
+    if (name === undefined && phoneNumber === undefined) {
+      return res.status(400).json({
+        success: false,
+        error: 'Provide name and/or phoneNumber',
+      });
+    }
+    const contact = updateContact(req.company.id, req.params.id, { name, phoneNumber });
+    return res.json({ success: true, contact });
+  } catch (err) {
+    const status =
+      err.message === 'Contact not found'
+        ? 404
+        : err.message === 'phoneNumber is required' ||
+            err.message === 'Another contact in this group already has that phone number'
+          ? 400
+          : 400;
     return res.status(status).json({ success: false, error: err.message });
   }
 });

@@ -58,6 +58,36 @@
       50% { opacity: .45; transform: scale(.85); }
     }
     .token-box { word-break: break-all; font-family: ui-monospace, monospace; font-size: .75rem; }
+    .action-menu { position: relative; display: inline-block; }
+    .action-menu-panel {
+      display: none;
+      position: fixed;
+      z-index: 200;
+      min-width: 9.5rem;
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 0.75rem;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+      padding: 0.35rem;
+    }
+    .action-menu.open .action-menu-panel { display: block; }
+    .action-menu-item {
+      display: block;
+      width: 100%;
+      text-align: left;
+      border: 0;
+      background: transparent;
+      border-radius: 0.5rem;
+      padding: 0.5rem 0.7rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #1f2937;
+      cursor: pointer;
+    }
+    .action-menu-item:hover { background: #f1f5f9; }
+    .action-menu-item:disabled { opacity: 0.4; cursor: not-allowed; }
+    .action-menu-item.danger { color: #dc2626; }
+    .action-menu-item.danger:hover { background: #fef2f2; }
   </style>
 </head>
 <body class="font-sans text-ink-900 antialiased min-h-screen">
@@ -384,40 +414,11 @@
 
       <!-- Campaigns list + detail (no separate View status button page) -->
       <section id="view-campaigns" class="view hidden space-y-4">
-        <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel p-5">
-          <div class="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h2 class="font-display font-semibold text-lg">Android app settings</h2>
-              <p class="mt-1 text-sm text-slate-500">Put these values in the APK Config screen, then Activate a campaign to start sending.</p>
-            </div>
-            <button type="button" id="copy-apk-setup" class="text-sm font-medium text-accent hover:text-accent-dark px-2 py-1.5">Copy setup</button>
-          </div>
-          <div class="mt-4 grid sm:grid-cols-2 gap-3 text-sm">
-            <div class="rounded-xl border border-slate-200 bg-slate-50 p-3">
-              <p class="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Server Base URL</p>
-              <p id="apk-setup-base-url" class="mt-1 font-mono text-ink-900 break-all">https://sms.awedaybet.com/api/gateway</p>
-            </div>
-            <div class="rounded-xl border border-slate-200 bg-slate-50 p-3">
-              <p class="text-[10px] font-semibold uppercase tracking-wide text-slate-500">API Token (Bearer)</p>
-              <p id="apk-setup-token" class="mt-1 font-mono text-ink-900 break-all">—</p>
-            </div>
-            <div class="rounded-xl border border-slate-200 bg-slate-50 p-3">
-              <p class="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Jobs Batch Size</p>
-              <p class="mt-1 text-ink-900">5–10 recommended (APK setting, max 50)</p>
-            </div>
-            <div class="rounded-xl border border-slate-200 bg-slate-50 p-3">
-              <p class="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Send delay</p>
-              <p class="mt-1 text-ink-900">2000 ms between SMS (APK setting)</p>
-            </div>
-          </div>
-          <p class="mt-3 text-xs text-slate-500">Also in APK: device name is auto. After config → Test &amp; Register. Only <strong>Active</strong> campaigns are pulled.</p>
-        </div>
-
         <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel overflow-hidden">
           <div class="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 class="font-display font-semibold text-lg">Campaigns</h2>
-              <p class="text-sm text-slate-500">Only Active campaigns are sent to the APK. Pause rejects pulls and returns processing jobs to the queue.</p>
+              <p class="text-sm text-slate-500">Click a row to open campaign detail. Only Active campaigns are pulled; Pause returns processing jobs to Queued.</p>
             </div>
             <div class="flex items-center gap-2">
               <button id="refresh-overview" class="text-sm font-medium text-accent hover:text-accent-dark px-2 py-1.5">Refresh</button>
@@ -430,6 +431,7 @@
                 <tr>
                   <th class="px-4 py-3 font-medium">Title</th>
                   <th class="px-4 py-3 font-medium">Status</th>
+                  <th class="px-4 py-3 font-medium">Device</th>
                   <th class="px-4 py-3 font-medium">Total</th>
                   <th class="px-4 py-3 font-medium">Queued</th>
                   <th class="px-4 py-3 font-medium">Processing</th>
@@ -444,12 +446,20 @@
             </table>
           </div>
         </div>
+      </section>
 
-        <div id="campaign-detail-panel" class="hidden space-y-4">
+      <!-- Campaign detail (opened from list row click) -->
+      <section id="view-campaign-detail" class="view hidden space-y-4">
         <div class="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 class="font-display font-semibold text-xl" id="detail-campaign-title">Campaign</h2>
-            <p class="text-sm text-slate-500 font-mono" id="detail-campaign-id"></p>
+          <div class="flex flex-wrap items-start gap-3">
+            <button type="button" id="back-to-campaigns"
+              class="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+              ← Campaigns
+            </button>
+            <div>
+              <h2 class="font-display font-semibold text-xl" id="detail-campaign-title">Campaign</h2>
+              <p class="text-sm text-slate-500 font-mono" id="detail-campaign-id"></p>
+            </div>
           </div>
           <button type="button" id="refresh-campaign-detail" class="text-sm font-medium text-accent hover:text-accent-dark">Refresh detail</button>
         </div>
@@ -539,7 +549,6 @@
               <tbody id="detail-messages-tbody" class="divide-y divide-slate-100"></tbody>
             </table>
           </div>
-        </div>
         </div>
       </section>
 
@@ -792,18 +801,59 @@
         </div>
       </section>
 
-      <section id="view-settings" class="view hidden space-y-4">
-        <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel p-5 max-w-xl">
-          <h2 class="font-display font-semibold text-lg">Gateway pull settings</h2>
-          <p class="mt-1 text-sm text-slate-500">
-            Batch size is controlled by the <strong>Android app</strong>
-            (<code class="text-xs bg-slate-100 px-1.5 py-0.5 rounded">?limit=</code> on
-            <code class="text-xs bg-slate-100 px-1.5 py-0.5 rounded">GET /api/gateway/jobs</code>).
-            This value is only used if the APK does not send a limit.
-          </p>
-          <form id="settings-form" class="mt-5 space-y-4">
+      <section id="view-settings" class="view hidden">
+        <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel p-4 max-w-4xl">
+          <div class="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <label class="block text-sm font-medium mb-1.5" for="setting-job-batch-size">Fallback jobs per pull</label>
+              <h2 class="font-display font-semibold text-base">Android app settings</h2>
+              <p class="text-xs text-slate-500">APK Config → Test &amp; Register → Activate campaign. Only Active campaigns are pulled.</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <button type="button" id="copy-apk-setup" class="rounded-lg border border-slate-200 text-xs font-medium px-2.5 py-1.5 hover:bg-slate-50">Copy setup</button>
+              <button type="button" id="regen-apk-token" class="rounded-lg border border-amber-200 text-amber-800 text-xs font-semibold px-2.5 py-1.5 hover:bg-amber-50">Regenerate token</button>
+            </div>
+          </div>
+
+          <div class="mt-3 grid sm:grid-cols-2 gap-2 text-sm">
+            <div class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <div class="flex items-center justify-between gap-2">
+                <p class="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Server Base URL</p>
+                <button type="button" data-copy-apk="base-url" class="text-xs font-medium text-accent hover:text-accent-dark">Copy</button>
+              </div>
+              <p id="apk-setup-base-url" class="mt-0.5 font-mono text-xs text-ink-900 break-all">https://sms.awedaybet.com/api/gateway</p>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <div class="flex items-center justify-between gap-2">
+                <p class="text-[10px] font-semibold uppercase tracking-wide text-slate-500">API Token (Bearer)</p>
+                <button type="button" data-copy-apk="token" class="text-xs font-medium text-accent hover:text-accent-dark">Copy</button>
+              </div>
+              <p id="apk-setup-token" class="mt-0.5 font-mono text-xs text-ink-900 break-all">—</p>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <p class="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Jobs Batch Size</p>
+              <p id="apk-setup-batch" class="mt-0.5 text-xs text-ink-900">5–10 recommended (APK, max 50)</p>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <p class="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Send delay</p>
+              <p id="apk-setup-delay" class="mt-0.5 text-xs text-ink-900">2000 ms between SMS (APK)</p>
+            </div>
+          </div>
+
+          <div class="mt-3 rounded-lg border border-teal-100 bg-teal-50/50 px-3 py-2 text-xs text-slate-700">
+            <p class="font-semibold text-ink-900 mb-1">Instructions</p>
+            <ol class="list-decimal pl-4 space-y-0.5">
+              <li>Open APK <strong>Config</strong>.</li>
+              <li>Paste <strong>Server Base URL</strong> and <strong>API Token</strong> from above.</li>
+              <li>Set batch size <strong>5–10</strong> and send delay <strong>2000 ms</strong>.</li>
+              <li>Tap <strong>Test &amp; Register</strong> (device name is usually auto).</li>
+              <li>In portal: create campaign (defaults Inactive) → <strong>Activate</strong> to allow pulls.</li>
+            </ol>
+            <p class="mt-1 text-[11px] text-slate-500">Only Active campaigns are pulled. Regenerate token → update APK (old token stops).</p>
+          </div>
+
+          <form id="settings-form" class="mt-3 flex flex-wrap items-end gap-2 border-t border-slate-100 pt-3">
+            <div class="min-w-[140px]">
+              <label class="block text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-1" for="setting-job-batch-size">Portal fallback pull</label>
               <input
                 id="setting-job-batch-size"
                 type="number"
@@ -811,16 +861,12 @@
                 max="50"
                 step="1"
                 required
-                class="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/30 focus:border-teal-500"
+                class="w-28 rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/30 focus:border-teal-500"
               />
-              <p class="mt-1.5 text-xs text-slate-500">Fallback only (1–50). APK <code>maxBatchSize</code> wins when provided.</p>
             </div>
-            <div class="flex items-center gap-3">
-              <button type="submit" class="px-4 py-2.5 rounded-xl bg-teal-600 text-white text-sm font-medium hover:bg-teal-700 transition">
-                Save settings
-              </button>
-              <p id="settings-status" class="text-sm text-slate-500"></p>
-            </div>
+            <button type="submit" class="rounded-lg bg-teal-600 text-white text-xs font-semibold px-3 py-2 hover:bg-teal-700">Save</button>
+            <p id="settings-status" class="text-xs text-slate-500 self-center"></p>
+            <p class="text-[11px] text-slate-400 self-center sm:ml-auto">APK batch wins when set.</p>
           </form>
         </div>
       </section>
@@ -941,6 +987,113 @@
     </div>
   </div>
 
+  <!-- Edit Group popup -->
+  <div id="edit-group-modal" class="hidden fixed inset-0 z-[90] flex items-center justify-center p-4">
+    <div id="edit-group-backdrop" class="absolute inset-0 bg-ink-950/40 backdrop-blur-[2px]"></div>
+    <div class="relative w-full max-w-md bg-white rounded-2xl shadow-panel border border-slate-200/80 p-6">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <h2 class="font-display font-semibold text-xl">Edit Group</h2>
+          <p class="mt-1 text-sm text-slate-500">Change the group name. Contacts stay the same.</p>
+        </div>
+        <button type="button" id="close-edit-group" class="text-sm font-medium text-slate-500 hover:text-ink-900">Close</button>
+      </div>
+      <form id="edit-group-form" class="mt-5 space-y-4">
+        <input type="hidden" id="edit-group-id" />
+        <div>
+          <label class="block text-sm font-medium mb-1.5" for="edit-group-name">Group Name</label>
+          <input id="edit-group-name" required
+            class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20" />
+        </div>
+        <div class="flex flex-wrap items-center gap-3 pt-1">
+          <button type="submit" class="rounded-xl bg-ink-900 hover:bg-ink-800 text-white font-semibold px-5 py-2.5 transition">Save</button>
+          <button type="button" id="cancel-edit-group" class="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancel</button>
+          <p id="edit-group-feedback" class="text-sm"></p>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Edit Contact popup -->
+  <div id="edit-contact-modal" class="hidden fixed inset-0 z-[90] flex items-center justify-center p-4">
+    <div id="edit-contact-backdrop" class="absolute inset-0 bg-ink-950/40 backdrop-blur-[2px]"></div>
+    <div class="relative w-full max-w-md bg-white rounded-2xl shadow-panel border border-slate-200/80 p-6">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <h2 class="font-display font-semibold text-xl">Edit Contact</h2>
+          <p class="mt-1 text-sm text-slate-500">Update name or phone number.</p>
+        </div>
+        <button type="button" id="close-edit-contact" class="text-sm font-medium text-slate-500 hover:text-ink-900">Close</button>
+      </div>
+      <form id="edit-contact-form" class="mt-5 space-y-4">
+        <input type="hidden" id="edit-contact-id" />
+        <div>
+          <label class="block text-sm font-medium mb-1.5" for="edit-contact-name">Full Name</label>
+          <input id="edit-contact-name"
+            class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1.5" for="edit-contact-phone">Phone</label>
+          <input id="edit-contact-phone" required
+            class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20" />
+        </div>
+        <div class="flex flex-wrap items-center gap-3 pt-1">
+          <button type="submit" class="rounded-xl bg-ink-900 hover:bg-ink-800 text-white font-semibold px-5 py-2.5 transition">Save</button>
+          <button type="button" id="cancel-edit-contact" class="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancel</button>
+          <p id="edit-contact-feedback" class="text-sm"></p>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Edit Campaign popup -->
+  <div id="edit-campaign-modal" class="hidden fixed inset-0 z-[90] flex items-center justify-center p-4">
+    <div id="edit-campaign-backdrop" class="absolute inset-0 bg-ink-950/40 backdrop-blur-[2px]"></div>
+    <div class="relative w-full max-w-xl max-h-[90vh] overflow-y-auto bg-white rounded-2xl shadow-panel border border-slate-200/80 p-6">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <h2 class="font-display font-semibold text-xl">Edit Campaign</h2>
+          <p class="mt-1 text-sm text-slate-500">Name and message anytime. Group/contacts only while everything is still Queued.</p>
+        </div>
+        <button type="button" id="close-edit-campaign" class="text-sm font-medium text-slate-500 hover:text-ink-900">Close</button>
+      </div>
+      <form id="edit-campaign-form" class="mt-5 space-y-4">
+        <input type="hidden" id="edit-camp-id" />
+        <div>
+          <label class="block text-sm font-medium mb-1.5" for="edit-camp-title">Campaign name</label>
+          <input id="edit-camp-title" required class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1.5" for="edit-camp-body">Message</label>
+          <textarea id="edit-camp-body" required rows="4"
+            class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 resize-y"></textarea>
+          <p class="mt-1 text-xs text-slate-400">Updates queued jobs only. Already sent messages keep the old text.</p>
+        </div>
+        <div id="edit-camp-group-wrap">
+          <label class="block text-sm font-medium mb-1.5" for="edit-camp-group">Contact group</label>
+          <select id="edit-camp-group"
+            class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20">
+            <option value="">Keep current contacts</option>
+          </select>
+          <p id="edit-camp-group-hint" class="mt-1 text-xs text-slate-400">Pick a group to replace all queued contacts with that group’s current list.</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1.5" for="edit-camp-device">Gateway device</label>
+          <select id="edit-camp-device"
+            class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20">
+            <option value="">No device — campaign will be Inactive</option>
+          </select>
+          <p class="mt-1 text-xs text-slate-400">No device → Inactive. With a device, Activate/Pause still controls sending.</p>
+        </div>
+        <div class="flex flex-wrap items-center gap-3 pt-1">
+          <button type="submit" class="rounded-xl bg-ink-900 hover:bg-ink-800 text-white font-semibold px-5 py-2.5 transition">Save changes</button>
+          <button type="button" id="cancel-edit-campaign" class="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancel</button>
+          <p id="edit-camp-feedback" class="text-sm"></p>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Create Campaign popup -->
   <div id="create-campaign-modal" class="hidden fixed inset-0 z-[90] flex items-center justify-center p-4">
     <div id="create-campaign-backdrop" class="absolute inset-0 bg-ink-950/40 backdrop-blur-[2px]"></div>
@@ -969,6 +1122,14 @@
           <label class="block text-sm font-medium mb-1.5" for="camp-body">Message body</label>
           <textarea id="camp-body" required rows="4" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 resize-y" placeholder="Hello! Your order is ready for pickup."></textarea>
           <p class="mt-1 text-xs text-slate-400"><span id="body-count">0</span> characters</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1.5" for="camp-device">Gateway device</label>
+          <select id="camp-device" required
+            class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20">
+            <option value="">Select a device…</option>
+          </select>
+          <p class="mt-1 text-xs text-slate-400">Required. Only this gateway can pull this campaign’s jobs. Register a device under Gateways first.</p>
         </div>
         <div>
           <label class="block text-sm font-medium mb-1.5" for="camp-status">Campaign status</label>
@@ -1000,7 +1161,7 @@
   </div>
 
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-  <script src="/js/app.js?v=apk-setup-on-campaigns-1"></script>
+  <script src="/js/app.js?v=campaign-detail-page-1"></script>
 </body>
 </html>
 

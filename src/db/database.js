@@ -110,6 +110,7 @@ ensureColumn('User', 'passwordHash', 'TEXT');
 ensureColumn('Company', 'jobBatchSize', 'INTEGER');
 ensureColumn('Company', 'isMasterWorkspace', 'INTEGER NOT NULL DEFAULT 0');
 ensureColumn('Campaign', 'status', "TEXT NOT NULL DEFAULT 'ACTIVE'");
+ensureColumn('Campaign', 'assignedDeviceIdentifier', 'TEXT');
 
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_user_company ON User(companyId);
@@ -740,6 +741,46 @@ function getGroupRecipients(companyIdValue, groupId) {
   };
 }
 
+function getContact(companyIdValue, contactId) {
+  return db
+    .prepare('SELECT * FROM Contact WHERE id = ? AND companyId = ?')
+    .get(contactId, companyIdValue);
+}
+
+function updateContact(companyIdValue, contactId, { name, phoneNumber } = {}) {
+  const existing = getContact(companyIdValue, contactId);
+  if (!existing) throw new Error('Contact not found');
+
+  let nextName = existing.name || '';
+  if (name !== undefined) {
+    nextName = String(name || '').trim();
+  }
+
+  let nextPhone = existing.phoneNumber;
+  if (phoneNumber !== undefined) {
+    nextPhone = String(phoneNumber || '')
+      .trim()
+      .replace(/[\s\-().]/g, '');
+    if (!nextPhone) throw new Error('phoneNumber is required');
+  }
+
+  if (nextPhone !== existing.phoneNumber) {
+    const dup = db
+      .prepare(
+        `SELECT id FROM Contact
+         WHERE groupId = ? AND companyId = ? AND phoneNumber = ? AND id != ?`
+      )
+      .get(existing.groupId, companyIdValue, nextPhone, contactId);
+    if (dup) throw new Error('Another contact in this group already has that phone number');
+  }
+
+  db.prepare(
+    `UPDATE Contact SET name = ?, phoneNumber = ? WHERE id = ? AND companyId = ?`
+  ).run(nextName, nextPhone, contactId, companyIdValue);
+
+  return getContact(companyIdValue, contactId);
+}
+
 function deleteContact(companyIdValue, contactId) {
   const result = db
     .prepare('DELETE FROM Contact WHERE id = ? AND companyId = ?')
@@ -896,7 +937,9 @@ function touchHeartbeat(deviceIdentifier, companyIdValue) {
 
 function pullJobs(companyIdValue, deviceIdentifier, limit) {
   touchHeartbeat(deviceIdentifier, companyIdValue);
+  const deviceId = String(deviceIdentifier || '').trim();
 
+  // Active campaigns only; unassigned (Any) OR assigned to this device.
   const select = db.prepare(
     `SELECT m.id, m.campaignId, m.recipientName, m.phoneNumber, m.body, m.priority, m.scheduledTime, m.preferredSim
      FROM MessageJob m
@@ -904,11 +947,12 @@ function pullJobs(companyIdValue, deviceIdentifier, limit) {
      WHERE m.status = 'QUEUED'
        AND m.companyId = ?
        AND UPPER(COALESCE(c.status, 'ACTIVE')) = 'ACTIVE'
+       AND TRIM(COALESCE(c.assignedDeviceIdentifier, '')) = ?
      ORDER BY m.priority DESC, m.createdAt ASC
      LIMIT ?`
   );
 
-  // Claim only if still QUEUED and campaign is still ACTIVE (pause rejects mid-pull).
+  // Claim only if still QUEUED, campaign ACTIVE, and assigned to this device.
   const markProcessing = db.prepare(
     `UPDATE MessageJob
      SET status = 'PROCESSING', updatedAt = ?
@@ -919,16 +963,17 @@ function pullJobs(companyIdValue, deviceIdentifier, limit) {
          SELECT id FROM Campaign
          WHERE companyId = ?
            AND UPPER(COALESCE(status, 'ACTIVE')) = 'ACTIVE'
+           AND TRIM(COALESCE(assignedDeviceIdentifier, '')) = ?
        )`
   );
 
   return withTransaction(() => {
-    const rows = select.all(companyIdValue, limit);
+    const rows = select.all(companyIdValue, deviceId, limit);
     const now = new Date().toISOString();
     const claimed = [];
 
     for (const row of rows) {
-      const result = markProcessing.run(now, row.id, companyIdValue, companyIdValue);
+      const result = markProcessing.run(now, row.id, companyIdValue, companyIdValue, deviceId);
       if (result.changes > 0) {
         claimed.push({
           id: row.id,
@@ -1087,6 +1132,28 @@ function normalizeCampaignStatus(status) {
   return s === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE';
 }
 
+function normalizeAssignedDevice(companyIdValue, assignedDeviceIdentifier, { required = true } = {}) {
+  const raw =
+    assignedDeviceIdentifier === undefined || assignedDeviceIdentifier === null
+      ? ''
+      : String(assignedDeviceIdentifier).trim();
+  if (!raw) {
+    if (required) throw new Error('A gateway device is required');
+    return null;
+  }
+  const device = db
+    .prepare(
+      `SELECT deviceIdentifier FROM Device
+       WHERE companyId = ? AND deviceIdentifier = ?
+       LIMIT 1`
+    )
+    .get(companyIdValue, raw);
+  if (!device) {
+    throw new Error('Assigned device not found for this company');
+  }
+  return device.deviceIdentifier;
+}
+
 function createCampaign({
   companyId: companyIdValue,
   id,
@@ -1095,11 +1162,15 @@ function createCampaign({
   phones,
   recipientNames = [],
   status = 'INACTIVE',
+  assignedDeviceIdentifier = null,
 }) {
   const campaignStatus = normalizeCampaignStatus(status ?? 'INACTIVE');
+  const deviceId = normalizeAssignedDevice(companyIdValue, assignedDeviceIdentifier, {
+    required: true,
+  });
   const insertCampaign = db.prepare(
-    `INSERT INTO Campaign (id, companyId, title, messageBody, totalMessages, status)
-     VALUES (?, ?, ?, ?, ?, ?)`
+    `INSERT INTO Campaign (id, companyId, title, messageBody, totalMessages, status, assignedDeviceIdentifier)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
   );
   const insertJob = db.prepare(
     `INSERT INTO MessageJob (id, companyId, campaignId, recipientName, phoneNumber, body, priority, status)
@@ -1107,17 +1178,247 @@ function createCampaign({
   );
 
   withTransaction(() => {
-    insertCampaign.run(id, companyIdValue, title, messageBody, phones.length, campaignStatus);
+    insertCampaign.run(
+      id,
+      companyIdValue,
+      title,
+      messageBody,
+      phones.length,
+      campaignStatus,
+      deviceId
+    );
     for (let i = 0; i < phones.length; i++) {
       insertJob.run(newId(), companyIdValue, id, recipientNames[i] || '', phones[i], messageBody);
     }
   });
 
-  return { id, totalMessages: phones.length, status: campaignStatus };
+  return {
+    id,
+    totalMessages: phones.length,
+    status: campaignStatus,
+    assignedDeviceIdentifier: deviceId,
+  };
+}
+
+function setCampaignDevice(companyIdValue, campaignIdValue, assignedDeviceIdentifier) {
+  const deviceId = normalizeAssignedDevice(companyIdValue, assignedDeviceIdentifier, {
+    required: true,
+  });
+  const result = db
+    .prepare(
+      `UPDATE Campaign SET assignedDeviceIdentifier = ? WHERE id = ? AND companyId = ?`
+    )
+    .run(deviceId, campaignIdValue, companyIdValue);
+  if (!result.changes) {
+    throw new Error('Campaign not found');
+  }
+  return getCampaign(companyIdValue, campaignIdValue);
+}
+
+function getCampaignJobCounts(companyIdValue, campaignIdValue) {
+  const rows = db
+    .prepare(
+      `SELECT status, COUNT(*) AS c
+       FROM MessageJob
+       WHERE companyId = ? AND campaignId = ?
+       GROUP BY status`
+    )
+    .all(companyIdValue, campaignIdValue);
+  const counts = {
+    total: 0,
+    queued: 0,
+    processing: 0,
+    sent: 0,
+    delivered: 0,
+    failed: 0,
+    nonQueued: 0,
+  };
+  for (const row of rows) {
+    const n = row.c || 0;
+    counts.total += n;
+    if (row.status === 'QUEUED') counts.queued += n;
+    else if (row.status === 'PROCESSING') {
+      counts.processing += n;
+      counts.nonQueued += n;
+    } else if (row.status === 'SENT') {
+      counts.sent += n;
+      counts.nonQueued += n;
+    } else if (row.status === 'DELIVERED') {
+      counts.delivered += n;
+      counts.nonQueued += n;
+    } else if (row.status === 'SEND_FAILED' || row.status === 'DELIVERY_FAILED') {
+      counts.failed += n;
+      counts.nonQueued += n;
+    } else {
+      counts.nonQueued += n;
+    }
+  }
+  counts.allQueued = counts.total === 0 || counts.nonQueued === 0;
+  return counts;
+}
+
+/**
+ * Edit campaign title, message body, device, and optionally replace contacts via groupId.
+ * groupId is allowed only when every job is still QUEUED (nothing started/sent).
+ * No device → forced INACTIVE. With a device, Active/Inactive is left unchanged.
+ */
+function updateCampaign(
+  companyIdValue,
+  campaignIdValue,
+  { title, messageBody, assignedDeviceIdentifier, groupId } = {}
+) {
+  const existing = getCampaign(companyIdValue, campaignIdValue);
+  if (!existing) throw new Error('Campaign not found');
+
+  let nextTitle = existing.title;
+  if (title !== undefined) {
+    const t = String(title || '').trim();
+    if (!t) throw new Error('title is required');
+    nextTitle = t;
+  }
+
+  let nextBody = existing.messageBody || '';
+  let bodyChanged = false;
+  if (messageBody !== undefined) {
+    const b = String(messageBody || '').trim();
+    if (!b) throw new Error('messageBody is required');
+    nextBody = b;
+    bodyChanged = nextBody !== (existing.messageBody || '');
+  }
+
+  let nextDevice =
+    existing.assignedDeviceIdentifier && String(existing.assignedDeviceIdentifier).trim()
+      ? String(existing.assignedDeviceIdentifier).trim()
+      : null;
+  if (assignedDeviceIdentifier !== undefined) {
+    nextDevice = normalizeAssignedDevice(companyIdValue, assignedDeviceIdentifier, {
+      required: false,
+    });
+  }
+
+  const replaceGroupId =
+    groupId === undefined || groupId === null || groupId === ''
+      ? null
+      : String(groupId).trim();
+  let replacement = null;
+  if (replaceGroupId) {
+    const jobCounts = getCampaignJobCounts(companyIdValue, campaignIdValue);
+    if (!jobCounts.allQueued) {
+      throw new Error(
+        'Cannot change group/contacts after sending has started. All messages must still be Queued.'
+      );
+    }
+    const group = getContactGroup(companyIdValue, replaceGroupId);
+    if (!group) throw new Error('Contact group not found');
+    replacement = getGroupRecipients(companyIdValue, replaceGroupId);
+    if (!replacement.phones.length) {
+      throw new Error('Selected group has no contacts');
+    }
+  }
+
+  return withTransaction(() => {
+    let nextStatus = normalizeCampaignStatus(existing.status || 'INACTIVE');
+    let reclaimed = 0;
+    const now = new Date().toISOString();
+
+    // No gateway → cannot stay Active
+    if (!nextDevice && nextStatus === 'ACTIVE') {
+      nextStatus = 'INACTIVE';
+      const reclaim = db
+        .prepare(
+          `UPDATE MessageJob
+           SET status = 'QUEUED', updatedAt = ?, failureReason = NULL
+           WHERE companyId = ?
+             AND campaignId = ?
+             AND status = 'PROCESSING'`
+        )
+        .run(now, companyIdValue, campaignIdValue);
+      reclaimed = reclaim.changes || 0;
+    }
+
+    let totalMessages = existing.totalMessages || 0;
+    let replacedContacts = false;
+    let updatedJobs = 0;
+
+    if (replacement) {
+      // Re-check inside transaction
+      const jobCounts = getCampaignJobCounts(companyIdValue, campaignIdValue);
+      if (!jobCounts.allQueued) {
+        throw new Error(
+          'Cannot change group/contacts after sending has started. All messages must still be Queued.'
+        );
+      }
+      db.prepare(
+        `DELETE FROM MessageJob WHERE companyId = ? AND campaignId = ?`
+      ).run(companyIdValue, campaignIdValue);
+
+      const insertJob = db.prepare(
+        `INSERT INTO MessageJob (id, companyId, campaignId, recipientName, phoneNumber, body, priority, status)
+         VALUES (?, ?, ?, ?, ?, ?, 0, 'QUEUED')`
+      );
+      for (let i = 0; i < replacement.phones.length; i++) {
+        insertJob.run(
+          newId(),
+          companyIdValue,
+          campaignIdValue,
+          replacement.names[i] || '',
+          replacement.phones[i],
+          nextBody
+        );
+      }
+      totalMessages = replacement.phones.length;
+      replacedContacts = true;
+      updatedJobs = totalMessages;
+    } else if (bodyChanged) {
+      const jobs = db
+        .prepare(
+          `UPDATE MessageJob
+           SET body = ?, updatedAt = ?
+           WHERE companyId = ?
+             AND campaignId = ?
+             AND status IN ('QUEUED', 'PROCESSING')`
+        )
+        .run(nextBody, now, companyIdValue, campaignIdValue);
+      updatedJobs = jobs.changes || 0;
+    }
+
+    db.prepare(
+      `UPDATE Campaign
+       SET title = ?, messageBody = ?, assignedDeviceIdentifier = ?, status = ?, totalMessages = ?
+       WHERE id = ? AND companyId = ?`
+    ).run(
+      nextTitle,
+      nextBody,
+      nextDevice,
+      nextStatus,
+      totalMessages,
+      campaignIdValue,
+      companyIdValue
+    );
+
+    const campaign = getCampaign(companyIdValue, campaignIdValue);
+    return {
+      ...campaign,
+      reclaimedProcessing: reclaimed,
+      updatedJobs,
+      replacedContacts,
+      allQueued: getCampaignJobCounts(companyIdValue, campaignIdValue).allQueued,
+    };
+  });
 }
 
 function setCampaignStatus(companyIdValue, campaignIdValue, status) {
   const campaignStatus = normalizeCampaignStatus(status);
+  const existing = getCampaign(companyIdValue, campaignIdValue);
+  if (!existing) throw new Error('Campaign not found');
+
+  if (campaignStatus === 'ACTIVE') {
+    const deviceId = String(existing.assignedDeviceIdentifier || '').trim();
+    if (!deviceId) {
+      throw new Error('Assign a gateway device before activating this campaign');
+    }
+  }
+
   return withTransaction(() => {
     const result = db
       .prepare(`UPDATE Campaign SET status = ? WHERE id = ? AND companyId = ?`)
@@ -1148,11 +1449,41 @@ function setCampaignStatus(companyIdValue, campaignIdValue, status) {
   });
 }
 
+/** Delete campaign and all its message jobs (company-scoped). */
+function deleteCampaign(companyIdValue, campaignIdValue) {
+  return withTransaction(() => {
+    const existing = getCampaign(companyIdValue, campaignIdValue);
+    if (!existing) {
+      throw new Error('Campaign not found');
+    }
+    const jobs = db
+      .prepare(`DELETE FROM MessageJob WHERE campaignId = ? AND companyId = ?`)
+      .run(campaignIdValue, companyIdValue);
+    const result = db
+      .prepare(`DELETE FROM Campaign WHERE id = ? AND companyId = ?`)
+      .run(campaignIdValue, companyIdValue);
+    if (!result.changes) {
+      throw new Error('Campaign not found');
+    }
+    return {
+      id: campaignIdValue,
+      deletedJobs: jobs.changes || 0,
+    };
+  });
+}
+
 function listCampaigns(companyIdValue) {
-  return db
+  const rows = db
     .prepare(
       `SELECT c.*,
         COALESCE(c.status, 'ACTIVE') AS status,
+        c.assignedDeviceIdentifier AS assignedDeviceIdentifier,
+        (
+          SELECT d.deviceName FROM Device d
+          WHERE d.companyId = c.companyId
+            AND d.deviceIdentifier = c.assignedDeviceIdentifier
+          LIMIT 1
+        ) AS assignedDeviceName,
         (SELECT COUNT(*) FROM MessageJob m WHERE m.campaignId = c.id AND m.status = 'QUEUED') AS queued,
         (SELECT COUNT(*) FROM MessageJob m WHERE m.campaignId = c.id AND m.status = 'PROCESSING') AS processing,
         (SELECT COUNT(*) FROM MessageJob m WHERE m.campaignId = c.id AND m.status = 'SENT') AS sent,
@@ -1163,6 +1494,19 @@ function listCampaigns(companyIdValue) {
        ORDER BY c.createdAt DESC`
     )
     .all(companyIdValue);
+  return rows.map((c) => {
+    const queued = c.queued ?? 0;
+    const processing = c.processing ?? 0;
+    const sent = c.sent ?? 0;
+    const delivered = c.delivered ?? 0;
+    const failed = c.failed ?? 0;
+    const started = processing + sent + delivered + failed;
+    return {
+      ...c,
+      allQueued: started === 0,
+      canChangeGroup: started === 0,
+    };
+  });
 }
 
 function listMessages({ companyId: companyIdValue, limit = 100, offset = 0, status, campaignId } = {}) {
@@ -1196,9 +1540,20 @@ function listDevices(companyIdValue) {
 }
 
 function getCampaign(companyIdValue, id) {
-  return db
-    .prepare('SELECT * FROM Campaign WHERE id = ? AND companyId = ?')
+  const row = db
+    .prepare(
+      `SELECT c.*,
+        (
+          SELECT d.deviceName FROM Device d
+          WHERE d.companyId = c.companyId
+            AND d.deviceIdentifier = c.assignedDeviceIdentifier
+          LIMIT 1
+        ) AS assignedDeviceName
+       FROM Campaign c
+       WHERE c.id = ? AND c.companyId = ?`
+    )
     .get(id, companyIdValue);
+  return row || null;
 }
 
 module.exports = {
@@ -1234,6 +1589,10 @@ module.exports = {
   requeueMessages,
   createCampaign,
   setCampaignStatus,
+  setCampaignDevice,
+  updateCampaign,
+  getCampaignJobCounts,
+  deleteCampaign,
   normalizeCampaignStatus,
   listCampaigns,
   listMessages,
@@ -1249,5 +1608,7 @@ module.exports = {
   listContacts,
   importContactsToGroup,
   getGroupRecipients,
+  getContact,
+  updateContact,
   deleteContact,
 };
