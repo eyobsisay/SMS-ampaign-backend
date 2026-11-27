@@ -525,17 +525,19 @@ router.get('/groups', (req, res) => {
  */
 router.post('/groups', (req, res) => {
   try {
-    const { name, contacts, splitSize } = req.body || {};
+    const { name, contacts, splitSize, excludeExistingInOtherGroups } = req.body || {};
     const result = createContactGroupsWithSplit(req.company.id, {
       name,
       contacts: Array.isArray(contacts) ? contacts : [],
       splitSize,
+      excludeExistingInOtherGroups: Boolean(excludeExistingInOtherGroups),
     });
     return res.status(201).json({
       success: true,
       groups: result.groups,
       group: result.groups[0] || null,
       totalContacts: result.totalContacts,
+      skippedElsewhere: result.skippedElsewhere || 0,
       splitSize: result.splitSize,
     });
   } catch (err) {
@@ -590,12 +592,14 @@ router.get('/groups/:id/contacts', (req, res) => {
 
 /**
  * POST /api/admin/groups/:id/import
- * Body: { contacts: [{ name, phoneNumber }] }
+ * Body: { contacts: [{ name, phoneNumber }], excludeExistingInOtherGroups?: boolean }
  */
 router.post('/groups/:id/import', (req, res) => {
   try {
-    const contacts = (req.body || {}).contacts;
-    const result = importContactsToGroup(req.company.id, req.params.id, contacts);
+    const { contacts, excludeExistingInOtherGroups } = req.body || {};
+    const result = importContactsToGroup(req.company.id, req.params.id, contacts, {
+      excludeExistingInOtherGroups: Boolean(excludeExistingInOtherGroups),
+    });
     return res.json({ success: true, ...result });
   } catch (err) {
     const status = err.message === 'Group not found' ? 404 : 400;

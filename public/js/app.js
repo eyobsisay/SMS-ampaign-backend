@@ -55,7 +55,11 @@
   }
 
   /** In-app confirm (replaces window.confirm) — returns true/false */
-  function appConfirm(message, title = 'Confirm', { danger = false, confirmLabel } = {}) {
+  function appConfirm(
+    message,
+    title = 'Confirm',
+    { danger = false, confirmLabel, cancelLabel } = {}
+  ) {
     return new Promise((resolve) => {
       const dialog = $('app-dialog');
       const cancelBtn = $('app-dialog-cancel');
@@ -63,6 +67,7 @@
       $('app-dialog-title').textContent = title;
       $('app-dialog-message').textContent = message;
       cancelBtn.classList.remove('hidden');
+      cancelBtn.textContent = cancelLabel || 'Cancel';
       okBtn.textContent = confirmLabel || (danger ? 'Delete' : 'Confirm');
       okBtn.className = danger
         ? 'rounded-xl bg-danger hover:bg-red-700 text-white px-4 py-2 text-sm font-semibold'
@@ -73,6 +78,7 @@
         okBtn.onclick = null;
         cancelBtn.onclick = null;
         $('app-dialog-backdrop').onclick = null;
+        cancelBtn.textContent = 'Cancel';
         resolve(value);
       };
       okBtn.onclick = () => finish(true);
@@ -788,6 +794,40 @@
     $('create-group-panel').classList.add('hidden');
     pendingCreateContacts = [];
     $('create-group-excel').value = '';
+  }
+
+  /** Ask whether to skip phones already in other groups. true = exclude, false = allow all. */
+  async function askExcludeElsewhere(contactCount) {
+    return appConfirm(
+      `You’re adding ${contactCount} contact(s).\n\nExclude numbers that already exist in other groups?\n\n• Exclude them — skip those phones\n• Allow all — same phone can be in multiple groups`,
+      'Numbers in other groups',
+      {
+        confirmLabel: 'Exclude them',
+        cancelLabel: 'Allow all',
+      }
+    );
+  }
+
+  function formatImportSkipSummary(result) {
+    const parts = [];
+    if (result.added != null) parts.push(`Added ${result.added}`);
+    if (result.skippedElsewhere) {
+      parts.push(`${result.skippedElsewhere} already in other groups`);
+    }
+    if (result.skippedDuplicate) {
+      parts.push(`${result.skippedDuplicate} duplicate in this group`);
+    }
+    if (result.skippedInvalid) {
+      parts.push(`${result.skippedInvalid} invalid`);
+    } else if (
+      result.skipped &&
+      !result.skippedElsewhere &&
+      !result.skippedDuplicate &&
+      !result.skippedInvalid
+    ) {
+      parts.push(`skipped ${result.skipped}`);
+    }
+    return parts.join(' · ') || 'Done';
   }
 
   function getContactsForCreate() {
@@ -2019,20 +2059,28 @@
       feedback.textContent = 'Split amount must be a positive number, or leave empty for full';
       return;
     }
+    let excludeExistingInOtherGroups = false;
+    if (contacts.length > 0) {
+      excludeExistingInOtherGroups = await askExcludeElsewhere(contacts.length);
+    }
     try {
       const data = await api('/api/admin/groups', {
         method: 'POST',
-        body: JSON.stringify({ name, contacts, splitSize }),
+        body: JSON.stringify({ name, contacts, splitSize, excludeExistingInOtherGroups }),
       });
       const count = data.groups?.length || 1;
       const added = data.totalContacts || 0;
+      const elsewhere = data.skippedElsewhere || 0;
       feedback.className = 'text-sm text-ok';
+      const elsewhereNote = elsewhere
+        ? ` · excluded ${elsewhere} already in other groups`
+        : '';
       if (count > 1) {
-        feedback.textContent = `Created ${count} groups (${name}_1…${name}_${count}) · ${added} contacts`;
+        feedback.textContent = `Created ${count} groups (${name}_1…${name}_${count}) · ${added} contacts${elsewhereNote}`;
       } else if (added) {
-        feedback.textContent = `Created ${data.group.name} with ${added} contacts`;
+        feedback.textContent = `Created ${data.group.name} with ${added} contacts${elsewhereNote}`;
       } else {
-        feedback.textContent = `Created ${data.group.name}`;
+        feedback.textContent = `Created ${data.group.name}${elsewhereNote}`;
       }
       hideCreateGroupPanel();
       $('split-size').value = '';
@@ -2080,7 +2128,10 @@
     try {
       const result = await api(`/api/admin/groups/${selectedGroupId}/import`, {
         method: 'POST',
-        body: JSON.stringify({ contacts: [{ name, phoneNumber }] }),
+        body: JSON.stringify({
+          contacts: [{ name, phoneNumber }],
+          excludeExistingInOtherGroups: false,
+        }),
       });
       if (result.added === 0) {
         feedback.className = 'text-sm text-danger';
@@ -2196,12 +2247,13 @@
         name: r.recipientName || '',
         phoneNumber: r.phoneNumber,
       }));
+      const excludeExistingInOtherGroups = await askExcludeElsewhere(contacts.length);
       const result = await api(`/api/admin/groups/${selectedGroupId}/import`, {
         method: 'POST',
-        body: JSON.stringify({ contacts }),
+        body: JSON.stringify({ contacts, excludeExistingInOtherGroups }),
       });
       importFb.className = 'text-ok';
-      importFb.textContent = `Added ${result.added}` + (result.skipped ? `, skipped ${result.skipped}` : '');
+      importFb.textContent = formatImportSkipSummary(result);
       openGroup(selectedGroupId);
     } catch (err) {
       importFb.className = 'text-danger';

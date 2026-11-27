@@ -599,11 +599,37 @@ function createContactGroup(companyIdValue, name) {
  * splitSize empty/0/null => one group with all contacts named `name`
  * splitSize 500 with 2000 contacts => name_1 … name_4 (500 each)
  */
-function createContactGroupsWithSplit(companyIdValue, { name, contacts = [], splitSize = null }) {
+function createContactGroupsWithSplit(
+  companyIdValue,
+  { name, contacts = [], splitSize = null, excludeExistingInOtherGroups = false } = {}
+) {
   const baseName = String(name || '').trim();
   if (!baseName) throw new Error('Group name is required');
 
-  const list = Array.isArray(contacts) ? contacts : [];
+  let list = Array.isArray(contacts) ? contacts.slice() : [];
+  let skippedElsewhere = 0;
+
+  // Filter once against phones already in the company (before creating split siblings)
+  if (excludeExistingInOtherGroups && list.length > 0) {
+    const existing = loadCompanyPhoneSet(companyIdValue);
+    const kept = [];
+    for (const c of list) {
+      let rawPhone = String(c.phoneNumber ?? c.phone ?? '').trim();
+      if (rawPhone.includes(':')) rawPhone = rawPhone.split(':').pop().trim();
+      const normalized = normalizeEthiopianMobile(rawPhone);
+      if (!normalized.ok) {
+        kept.push(c); // let importContactsToGroup count invalid
+        continue;
+      }
+      if (existing.has(normalized.phone)) {
+        skippedElsewhere += 1;
+        continue;
+      }
+      kept.push(c);
+    }
+    list = kept;
+  }
+
   const size = splitSize === null || splitSize === undefined || splitSize === ''
     ? 0
     : parseInt(splitSize, 10);
@@ -617,12 +643,15 @@ function createContactGroupsWithSplit(companyIdValue, { name, contacts = [], spl
     const group = createContactGroup(companyIdValue, baseName);
     let importResult = null;
     if (list.length > 0) {
-      importResult = importContactsToGroup(companyIdValue, group.id, list);
+      importResult = importContactsToGroup(companyIdValue, group.id, list, {
+        excludeExistingInOtherGroups: false,
+      });
       group.contactCount = importResult.contactCount;
     }
     return {
       groups: [group],
       totalContacts: importResult ? importResult.added : 0,
+      skippedElsewhere,
       splitSize: null,
     };
   }
@@ -642,7 +671,9 @@ function createContactGroupsWithSplit(companyIdValue, { name, contacts = [], spl
   chunks.forEach((chunk, index) => {
     const groupName = `${baseName}_${index + 1}`;
     const group = createContactGroup(companyIdValue, groupName);
-    const importResult = importContactsToGroup(companyIdValue, group.id, chunk);
+    const importResult = importContactsToGroup(companyIdValue, group.id, chunk, {
+      excludeExistingInOtherGroups: false,
+    });
     group.contactCount = importResult.contactCount;
     totalAdded += importResult.added;
     groups.push(group);
@@ -651,6 +682,7 @@ function createContactGroupsWithSplit(companyIdValue, { name, contacts = [], spl
   return {
     groups,
     totalContacts: totalAdded,
+    skippedElsewhere,
     splitSize: size,
   };
 }
@@ -695,12 +727,32 @@ function listContacts(companyIdValue, groupId) {
     .all(companyIdValue, groupId);
 }
 
+function loadCompanyPhoneSet(companyIdValue, { exceptGroupId = null } = {}) {
+  const rows = exceptGroupId
+    ? db
+        .prepare(
+          `SELECT DISTINCT phoneNumber FROM Contact
+           WHERE companyId = ? AND groupId != ?`
+        )
+        .all(companyIdValue, exceptGroupId)
+    : db
+        .prepare(`SELECT DISTINCT phoneNumber FROM Contact WHERE companyId = ?`)
+        .all(companyIdValue);
+  return new Set(rows.map((r) => r.phoneNumber));
+}
+
 /**
  * Import contacts into a group.
  * contacts: [{ name, phoneNumber }]
- * Returns { added, skipped }
+ * excludeExistingInOtherGroups: skip phones already in another group (same company)
+ * Returns { added, skipped, skippedInvalid, skippedElsewhere, skippedDuplicate }
  */
-function importContactsToGroup(companyIdValue, groupId, contacts) {
+function importContactsToGroup(
+  companyIdValue,
+  groupId,
+  contacts,
+  { excludeExistingInOtherGroups = false } = {}
+) {
   const group = getContactGroup(companyIdValue, groupId);
   if (!group) throw new Error('Group not found');
   if (!Array.isArray(contacts) || contacts.length === 0) {
@@ -713,26 +765,45 @@ function importContactsToGroup(companyIdValue, groupId, contacts) {
   );
 
   let added = 0;
-  let skipped = 0;
+  let skippedInvalid = 0;
+  let skippedElsewhere = 0;
+  let skippedDuplicate = 0;
 
   withTransaction(() => {
+    const elsewhere = excludeExistingInOtherGroups
+      ? loadCompanyPhoneSet(companyIdValue, { exceptGroupId: groupId })
+      : null;
+
     for (const c of contacts) {
       let rawPhone = String(c.phoneNumber ?? c.phone ?? '').trim();
       if (rawPhone.includes(':')) rawPhone = rawPhone.split(':').pop().trim();
       const normalized = normalizeEthiopianMobile(rawPhone);
       if (!normalized.ok) {
-        skipped += 1;
+        skippedInvalid += 1;
         continue;
       }
       const phone = normalized.phone;
+      if (elsewhere && elsewhere.has(phone)) {
+        skippedElsewhere += 1;
+        continue;
+      }
       const name = String(c.name ?? c.recipientName ?? '').trim();
       const result = insert.run(newId(), companyIdValue, groupId, name, phone);
       if (result.changes > 0) added += 1;
-      else skipped += 1;
+      else skippedDuplicate += 1;
     }
   });
 
-  return { added, skipped, groupId, contactCount: listContacts(companyIdValue, groupId).length };
+  const skipped = skippedInvalid + skippedElsewhere + skippedDuplicate;
+  return {
+    added,
+    skipped,
+    skippedInvalid,
+    skippedElsewhere,
+    skippedDuplicate,
+    groupId,
+    contactCount: listContacts(companyIdValue, groupId).length,
+  };
 }
 
 function getGroupRecipients(companyIdValue, groupId) {
