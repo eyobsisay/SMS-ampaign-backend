@@ -24,6 +24,7 @@ const {
   updateContact,
   deleteContact,
   resolveJobBatchSize,
+  resolveJobRecipientNameMode,
   updateCompanySettings,
   regenerateCompanyToken,
   publicCompany,
@@ -129,6 +130,7 @@ router.get('/me', (req, res) => {
 router.get('/settings', (req, res) => {
   try {
     const jobBatchSize = resolveJobBatchSize(req.company);
+    const jobRecipientNameMode = resolveJobRecipientNameMode(req.company);
     return res.json({
       success: true,
       settings: {
@@ -136,6 +138,8 @@ router.get('/settings', (req, res) => {
         jobBatchSizeMin: 1,
         jobBatchSizeMax: MAX_JOB_BATCH_SIZE,
         jobBatchSizeDefault: DEFAULT_JOB_BATCH_SIZE,
+        jobRecipientNameMode,
+        jobRecipientNameModes: ['name_or_phone', 'name', 'phone'],
       },
     });
   } catch (err) {
@@ -167,23 +171,28 @@ router.post('/regenerate-token', (req, res) => {
 
 /**
  * PATCH /api/admin/settings
- * Body: { jobBatchSize: number }  // 1..50 — jobs returned per gateway pull
+ * Body: { jobBatchSize?: number, jobRecipientNameMode?: 'name'|'phone'|'name_or_phone' }
  */
 router.patch('/settings', (req, res) => {
   try {
-    const { jobBatchSize } = req.body || {};
-    if (jobBatchSize === undefined) {
+    const { jobBatchSize, jobRecipientNameMode } = req.body || {};
+    if (jobBatchSize === undefined && jobRecipientNameMode === undefined) {
       return res.status(400).json({
         success: false,
-        error: 'jobBatchSize is required',
+        error: 'Provide jobBatchSize and/or jobRecipientNameMode',
       });
     }
 
-    const company = updateCompanySettings(req.company.id, { jobBatchSize });
+    const company = updateCompanySettings(req.company.id, {
+      jobBatchSize,
+      jobRecipientNameMode,
+    });
     const resolved = resolveJobBatchSize(company);
+    const nameMode = resolveJobRecipientNameMode(company);
 
     // Keep auth middleware company object in sync for this request
     req.company.jobBatchSize = company.jobBatchSize;
+    req.company.jobRecipientNameMode = company.jobRecipientNameMode;
 
     return res.json({
       success: true,
@@ -192,6 +201,8 @@ router.patch('/settings', (req, res) => {
         jobBatchSizeMin: 1,
         jobBatchSizeMax: MAX_JOB_BATCH_SIZE,
         jobBatchSizeDefault: DEFAULT_JOB_BATCH_SIZE,
+        jobRecipientNameMode: nameMode,
+        jobRecipientNameModes: ['name_or_phone', 'name', 'phone'],
       },
     });
   } catch (err) {
@@ -285,15 +296,15 @@ router.post('/campaigns', (req, res) => {
     }
 
     const id = campaignId();
-    // New campaigns default to INACTIVE until the user Activates them.
-    const campaignStatus = normalizeCampaignStatus(
+    // Device optional: no device → always INACTIVE. With device, honor requested status (default Inactive).
+    const hasDevice = Boolean(
+      assignedDeviceIdentifier && String(assignedDeviceIdentifier).trim()
+    );
+    let campaignStatus = normalizeCampaignStatus(
       status === undefined || status === null || status === '' ? 'INACTIVE' : status
     );
-    if (!assignedDeviceIdentifier || !String(assignedDeviceIdentifier).trim()) {
-      return res.status(400).json({
-        success: false,
-        error: 'A gateway device is required',
-      });
+    if (!hasDevice) {
+      campaignStatus = 'INACTIVE';
     }
 
     const result = createCampaign({
@@ -304,7 +315,8 @@ router.post('/campaigns', (req, res) => {
       phones,
       recipientNames: names,
       status: campaignStatus,
-      assignedDeviceIdentifier,
+      assignedDeviceIdentifier: hasDevice ? assignedDeviceIdentifier : null,
+      sourceGroupId: groupId || null,
     });
 
     return res.status(201).json({

@@ -109,9 +109,15 @@ ensureColumn('MessageJob', 'companyId', 'TEXT');
 ensureColumn('User', 'username', 'TEXT');
 ensureColumn('User', 'passwordHash', 'TEXT');
 ensureColumn('Company', 'jobBatchSize', 'INTEGER');
+ensureColumn(
+  'Company',
+  'jobRecipientNameMode',
+  "TEXT NOT NULL DEFAULT 'name_or_phone'"
+);
 ensureColumn('Company', 'isMasterWorkspace', 'INTEGER NOT NULL DEFAULT 0');
 ensureColumn('Campaign', 'status', "TEXT NOT NULL DEFAULT 'ACTIVE'");
 ensureColumn('Campaign', 'assignedDeviceIdentifier', 'TEXT');
+ensureColumn('Campaign', 'sourceGroupId', 'TEXT');
 
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_user_company ON User(companyId);
@@ -167,7 +173,34 @@ function resolveJobBatchSize(company) {
   return clampJobBatchSize(process.env.JOB_BATCH_SIZE) || DEFAULT_JOB_BATCH_SIZE;
 }
 
-function updateCompanySettings(companyIdValue, { jobBatchSize } = {}) {
+/** How recipientName is filled on gateway job pull */
+const JOB_RECIPIENT_NAME_MODES = new Set(['name', 'phone', 'name_or_phone']);
+const DEFAULT_JOB_RECIPIENT_NAME_MODE = 'name_or_phone';
+
+function normalizeJobRecipientNameMode(value) {
+  const mode = String(value || DEFAULT_JOB_RECIPIENT_NAME_MODE)
+    .toLowerCase()
+    .trim();
+  return JOB_RECIPIENT_NAME_MODES.has(mode) ? mode : DEFAULT_JOB_RECIPIENT_NAME_MODE;
+}
+
+function resolveJobRecipientNameMode(company) {
+  return normalizeJobRecipientNameMode(company?.jobRecipientNameMode);
+}
+
+function formatJobRecipientName(mode, recipientName, phoneNumber) {
+  const name = String(recipientName || '').trim();
+  const phone = String(phoneNumber || '').trim();
+  const m = normalizeJobRecipientNameMode(mode);
+  if (m === 'phone') return phone;
+  if (m === 'name') return name;
+  return name || phone;
+}
+
+function updateCompanySettings(
+  companyIdValue,
+  { jobBatchSize, jobRecipientNameMode } = {}
+) {
   const company = getCompanyById(companyIdValue);
   if (!company) {
     throw new Error('Company not found');
@@ -179,6 +212,19 @@ function updateCompanySettings(companyIdValue, { jobBatchSize } = {}) {
       throw new Error(`jobBatchSize must be a number between 1 and ${MAX_JOB_BATCH_SIZE}`);
     }
     db.prepare('UPDATE Company SET jobBatchSize = ? WHERE id = ?').run(clamped, companyIdValue);
+  }
+
+  if (jobRecipientNameMode !== undefined) {
+    const mode = String(jobRecipientNameMode || '')
+      .toLowerCase()
+      .trim();
+    if (!JOB_RECIPIENT_NAME_MODES.has(mode)) {
+      throw new Error('jobRecipientNameMode must be name, phone, or name_or_phone');
+    }
+    db.prepare('UPDATE Company SET jobRecipientNameMode = ? WHERE id = ?').run(
+      mode,
+      companyIdValue
+    );
   }
 
   return getCompanyById(companyIdValue);
@@ -326,6 +372,7 @@ function publicCompany(company) {
     apiToken: company.apiToken,
     createdAt: company.createdAt,
     jobBatchSize: company.jobBatchSize,
+    jobRecipientNameMode: resolveJobRecipientNameMode(company),
     isMasterWorkspace: !!company.isMasterWorkspace,
   };
 }
@@ -568,12 +615,23 @@ function listContactGroups(companyIdValue) {
   return db
     .prepare(
       `SELECT g.*,
-        (SELECT COUNT(*) FROM Contact c WHERE c.groupId = g.id) AS contactCount
+        (SELECT COUNT(*) FROM Contact c WHERE c.groupId = g.id) AS contactCount,
+        (SELECT COUNT(*) FROM Campaign camp
+          WHERE camp.companyId = g.companyId
+            AND camp.sourceGroupId = g.id) AS campaignUseCount
        FROM ContactGroup g
        WHERE g.companyId = ?
        ORDER BY g.createdAt DESC`
     )
-    .all(companyIdValue);
+    .all(companyIdValue)
+    .map((g) => {
+      const campaignUseCount = Number(g.campaignUseCount || 0);
+      return {
+        ...g,
+        campaignUseCount,
+        usedInCampaign: campaignUseCount > 0,
+      };
+    });
 }
 
 function getContactGroup(companyIdValue, groupId) {
@@ -1010,6 +1068,8 @@ function touchHeartbeat(deviceIdentifier, companyIdValue) {
 function pullJobs(companyIdValue, deviceIdentifier, limit) {
   touchHeartbeat(deviceIdentifier, companyIdValue);
   const deviceId = String(deviceIdentifier || '').trim();
+  const company = getCompanyById(companyIdValue);
+  const nameMode = resolveJobRecipientNameMode(company);
 
   // Active campaigns only; must be assigned to this device.
   const select = db.prepare(
@@ -1053,8 +1113,11 @@ function pullJobs(companyIdValue, deviceIdentifier, limit) {
           campaignId: row.campaignId,
           campaignTitle: row.campaignTitle || '',
           campaignName: row.campaignTitle || '',
-          // Empty name → send phone so APK always has a display name
-          recipientName: String(row.recipientName || '').trim() || row.phoneNumber || '',
+          recipientName: formatJobRecipientName(
+            nameMode,
+            row.recipientName,
+            row.phoneNumber
+          ),
           phoneNumber: row.phoneNumber,
           body: row.body,
           priority: row.priority,
@@ -1239,14 +1302,21 @@ function createCampaign({
   recipientNames = [],
   status = 'INACTIVE',
   assignedDeviceIdentifier = null,
+  sourceGroupId = null,
 }) {
-  const campaignStatus = normalizeCampaignStatus(status ?? 'INACTIVE');
   const deviceId = normalizeAssignedDevice(companyIdValue, assignedDeviceIdentifier, {
-    required: true,
+    required: false,
   });
+  // No device → must stay Inactive (cannot Activate later until a device is assigned)
+  let campaignStatus = normalizeCampaignStatus(status ?? 'INACTIVE');
+  if (!deviceId) {
+    campaignStatus = 'INACTIVE';
+  }
+  const groupRef =
+    sourceGroupId && String(sourceGroupId).trim() ? String(sourceGroupId).trim() : null;
   const insertCampaign = db.prepare(
-    `INSERT INTO Campaign (id, companyId, title, messageBody, totalMessages, status, assignedDeviceIdentifier)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO Campaign (id, companyId, title, messageBody, totalMessages, status, assignedDeviceIdentifier, sourceGroupId)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   );
   const insertJob = db.prepare(
     `INSERT INTO MessageJob (id, companyId, campaignId, recipientName, phoneNumber, body, priority, status)
@@ -1261,7 +1331,8 @@ function createCampaign({
       messageBody,
       phones.length,
       campaignStatus,
-      deviceId
+      deviceId,
+      groupRef
     );
     for (let i = 0; i < phones.length; i++) {
       const phone = phones[i];
@@ -1455,9 +1526,11 @@ function updateCampaign(
       updatedJobs = jobs.changes || 0;
     }
 
+    const nextSourceGroupId = replaceGroupId || existing.sourceGroupId || null;
+
     db.prepare(
       `UPDATE Campaign
-       SET title = ?, messageBody = ?, assignedDeviceIdentifier = ?, status = ?, totalMessages = ?
+       SET title = ?, messageBody = ?, assignedDeviceIdentifier = ?, status = ?, totalMessages = ?, sourceGroupId = ?
        WHERE id = ? AND companyId = ?`
     ).run(
       nextTitle,
@@ -1465,6 +1538,7 @@ function updateCampaign(
       nextDevice,
       nextStatus,
       totalMessages,
+      nextSourceGroupId,
       campaignIdValue,
       companyIdValue
     );
@@ -1637,6 +1711,7 @@ module.exports = {
   normalizeStatus,
   clampJobBatchSize,
   resolveJobBatchSize,
+  resolveJobRecipientNameMode,
   updateCompanySettings,
   getCompanyByToken,
   getCompanyById,

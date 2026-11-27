@@ -358,9 +358,7 @@
       const emptyLabel =
         selectId === 'edit-camp-device'
           ? 'No device — campaign will be Inactive'
-          : cachedDevices.length
-            ? 'Select a device…'
-            : 'No devices — register a gateway first';
+          : 'No device — create as Inactive';
       if (!cachedDevices.length) {
         select.innerHTML = `<option value="">${emptyLabel}</option>`;
         select.value = '';
@@ -379,7 +377,7 @@
       if (selectedId) select.value = selectedId;
     } catch (err) {
       console.error(err);
-      select.innerHTML = '<option value="">Select a device…</option>';
+      select.innerHTML = '<option value="">No device — create as Inactive</option>';
     }
   }
 
@@ -453,6 +451,7 @@
       $('create-feedback').className = 'text-sm';
     }
     if ($('camp-status')) $('camp-status').value = 'INACTIVE';
+    if ($('camp-include-used-groups')) $('camp-include-used-groups').checked = false;
     loadCampaignGroups();
     loadCampaignDeviceOptions('camp-device', '');
     modal.classList.remove('hidden');
@@ -846,7 +845,7 @@
       const tbody = $('groups-tbody');
       if (!cachedGroups.length) {
         tbody.innerHTML =
-          '<tr><td colspan="3" class="px-4 py-8 text-center text-slate-400">No groups yet. Create one above.</td></tr>';
+          '<tr><td colspan="4" class="px-4 py-8 text-center text-slate-400">No groups yet. Create one above.</td></tr>';
         return;
       }
       tbody.innerHTML = cachedGroups
@@ -858,6 +857,7 @@
             <div class="text-xs text-slate-400 font-mono">${escapeHtml(g.id)}</div>
           </td>
           <td class="px-4 py-3">${g.contactCount}</td>
+          <td class="px-4 py-3 text-slate-500 whitespace-nowrap text-xs">${formatTime(g.createdAt)}</td>
           <td class="px-4 py-3 whitespace-nowrap">
             <div class="action-menu">
               <button type="button" data-action-menu-toggle
@@ -901,28 +901,59 @@
     try {
       const data = await api('/api/admin/groups');
       cachedGroups = data.groups || [];
-      const select = $('camp-group');
-      const current = select.value;
-      select.innerHTML = '<option value="">Select a group…</option>';
-      for (const g of cachedGroups) {
-        const opt = document.createElement('option');
-        opt.value = g.id;
-        opt.textContent = `${g.name} (${g.contactCount})`;
-        opt.dataset.count = String(g.contactCount);
-        select.appendChild(opt);
-      }
-      if (current && cachedGroups.some((g) => g.id === current)) {
-        select.value = current;
-      }
-      updateCampGroupCount();
+      fillCampaignGroupSelect();
     } catch (err) {
       console.error(err);
     }
   }
 
+  function isGroupUsedInCampaign(g) {
+    return Boolean(g?.usedInCampaign) || Number(g?.campaignUseCount || 0) > 0;
+  }
+
+  function fillCampaignGroupSelect() {
+    const select = $('camp-group');
+    if (!select) return;
+    // Unchecked → used groups disappear from the dropdown
+    const showUsed = Boolean($('camp-include-used-groups')?.checked);
+    const current = select.value;
+    const visible = showUsed
+      ? cachedGroups
+      : cachedGroups.filter((g) => !isGroupUsedInCampaign(g));
+
+    select.innerHTML = '<option value="">Select a group…</option>';
+    for (const g of visible) {
+      const opt = document.createElement('option');
+      opt.value = g.id;
+      const used = isGroupUsedInCampaign(g);
+      opt.textContent = used
+        ? `${g.name} (${g.contactCount}) · already used`
+        : `${g.name} (${g.contactCount})`;
+      opt.dataset.count = String(g.contactCount ?? 0);
+      select.appendChild(opt);
+    }
+
+    if (!visible.length) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.disabled = true;
+      opt.textContent = showUsed
+        ? 'No groups available'
+        : 'No unused groups — check the box to show used groups';
+      select.appendChild(opt);
+    }
+
+    if (current && visible.some((g) => g.id === current)) {
+      select.value = current;
+    } else {
+      select.value = '';
+    }
+    updateCampGroupCount();
+  }
+
   function updateCampGroupCount() {
     const select = $('camp-group');
-    const opt = select.selectedOptions[0];
+    const opt = select?.selectedOptions?.[0];
     $('camp-group-count').textContent = opt?.dataset.count || '0';
   }
 
@@ -969,6 +1000,10 @@
         input.value = String(s.jobBatchSize ?? 10);
         input.min = String(s.jobBatchSizeMin ?? 1);
         input.max = String(s.jobBatchSizeMax ?? 50);
+      }
+      const nameMode = $('setting-recipient-name-mode');
+      if (nameMode) {
+        nameMode.value = s.jobRecipientNameMode || 'name_or_phone';
       }
       if (statusEl && !statusEl.dataset.saved) statusEl.textContent = '';
     } catch (err) {
@@ -2032,7 +2067,8 @@
   bodyEl.addEventListener('input', () => {
     $('body-count').textContent = String(bodyEl.value.length);
   });
-  $('camp-group').addEventListener('change', updateCampGroupCount);
+  $('camp-group')?.addEventListener('change', updateCampGroupCount);
+  $('camp-include-used-groups')?.addEventListener('change', fillCampaignGroupSelect);
 
   $('create-group-btn').addEventListener('click', async () => {
     const feedback = $('group-create-feedback');
@@ -2273,21 +2309,21 @@
       return;
     }
     const title = $('camp-title').value.trim();
-    const status = $('camp-status')?.value || 'INACTIVE';
+    let status = $('camp-status')?.value || 'INACTIVE';
     const assignedDeviceIdentifier = $('camp-device')?.value || '';
-    if (!assignedDeviceIdentifier) {
-      feedback.className = 'text-sm text-danger';
-      feedback.textContent = 'Select a gateway device';
-      return;
-    }
+    // No device → always create Inactive
+    if (!assignedDeviceIdentifier) status = 'INACTIVE';
     const count = $('camp-group-count')?.textContent || '?';
-    const deviceLabel =
-      cachedDevices.find((d) => d.deviceIdentifier === assignedDeviceIdentifier)?.deviceName ||
-      assignedDeviceIdentifier;
+    const deviceLabel = assignedDeviceIdentifier
+      ? cachedDevices.find((d) => d.deviceIdentifier === assignedDeviceIdentifier)?.deviceName ||
+        assignedDeviceIdentifier
+      : null;
     const okCreate = await appConfirm(
-      status === 'ACTIVE'
-        ? `Create “${title}” (${count} messages) as Active on ${deviceLabel}? Pulls can start immediately.`
-        : `Create “${title}” (${count} messages) as Inactive on ${deviceLabel}? Activate later to allow pulls.`,
+      !deviceLabel
+        ? `Create “${title}” (${count} messages) with no gateway? It will be Inactive until you assign a device and Activate.`
+        : status === 'ACTIVE'
+          ? `Create “${title}” (${count} messages) as Active on ${deviceLabel}? Pulls can start immediately.`
+          : `Create “${title}” (${count} messages) as Inactive on ${deviceLabel}? Activate later to allow pulls.`,
       'Create campaign',
       { confirmLabel: 'Create & Queue' }
     );
@@ -2301,7 +2337,7 @@
           messageBody: bodyEl.value.trim(),
           groupId,
           status,
-          assignedDeviceIdentifier,
+          assignedDeviceIdentifier: assignedDeviceIdentifier || null,
         }),
       });
       feedback.className = 'text-sm text-ok';
@@ -2326,7 +2362,9 @@
     e.preventDefault();
     const statusEl = $('settings-status');
     const input = $('setting-job-batch-size');
+    const nameModeEl = $('setting-recipient-name-mode');
     const value = parseInt(input?.value, 10);
+    const jobRecipientNameMode = nameModeEl?.value || 'name_or_phone';
     if (!Number.isFinite(value) || value < 1 || value > 50) {
       if (statusEl) {
         statusEl.className = 'text-sm text-danger';
@@ -2338,13 +2376,15 @@
     try {
       const data = await api('/api/admin/settings', {
         method: 'PATCH',
-        body: JSON.stringify({ jobBatchSize: value }),
+        body: JSON.stringify({ jobBatchSize: value, jobRecipientNameMode }),
       });
       const saved = data.settings?.jobBatchSize ?? value;
+      const savedMode = data.settings?.jobRecipientNameMode || jobRecipientNameMode;
       if (input) input.value = String(saved);
+      if (nameModeEl) nameModeEl.value = savedMode;
       if (statusEl) {
         statusEl.className = 'text-sm text-ok';
-        statusEl.textContent = `Saved · ${saved} jobs per pull`;
+        statusEl.textContent = `Saved · pull ${saved} · name mode ${savedMode}`;
         statusEl.dataset.saved = '1';
         setTimeout(() => {
           if (statusEl.dataset.saved === '1') {
