@@ -574,6 +574,26 @@
     return Date.now() - t < 2 * 60 * 1000;
   }
 
+  /** Ethio 09… / Safaricom 07… → national 10-digit, or null if invalid */
+  function normalizeEthiopianMobile(raw) {
+    let s = String(raw ?? '')
+      .trim()
+      .replace(/[\s\-().]/g, '');
+    if (!s) return null;
+    if (/e\+/i.test(s)) {
+      const n = Number(String(raw).trim());
+      if (Number.isFinite(n)) s = n.toFixed(0);
+    }
+    s = s.replace(/^\+/, '');
+    let d = s.replace(/\D/g, '');
+    if (d.startsWith('251') && d.length === 12 && /^251[79]\d{8}$/.test(d)) {
+      d = `0${d.slice(3)}`;
+    }
+    if (d.length === 9 && /^[79]\d{8}$/.test(d)) d = `0${d}`;
+    if (d.length === 10 && /^0[79]\d{8}$/.test(d)) return d;
+    return null;
+  }
+
   function parseRecipientLines(raw) {
     const parts = String(raw || '')
       .split(/[\n,;]+/)
@@ -589,9 +609,8 @@
         name = part.slice(0, colonIdx).trim();
         numberPart = part.slice(colonIdx + 1).trim();
       }
-      let number = numberPart.replace(/[\s\-().]/g, '');
-      const digits = number.replace(/\D/g, '');
-      if (digits.length < 7) continue;
+      const number = normalizeEthiopianMobile(numberPart);
+      if (!number) continue;
       if (seen.has(number)) continue;
       seen.add(number);
       recipients.push({ recipientName: name, phoneNumber: number });
@@ -617,9 +636,15 @@
     return -1;
   }
 
+  function looksLikePhone(value) {
+    return Boolean(normalizeEthiopianMobile(value));
+  }
+
   function parseExcelRows(rows) {
     if (!rows || !rows.length) return [];
     const header = rows[0].map((c) => String(c ?? ''));
+    const colCount = Math.max(...rows.map((r) => (r || []).length), header.length);
+
     let nameIdx = findColumnIndex(header, [
       'name',
       'full name',
@@ -639,23 +664,36 @@
       'cell',
     ]);
 
+    // Same column matched both (e.g. odd header) → treat as phone-only
+    if (phoneIdx >= 0 && nameIdx === phoneIdx) nameIdx = -1;
+
     let startRow = 1;
-    // No header match — assume col0=name, col1=phone (or col0=phone only)
-    if (phoneIdx < 0) {
+
+    // Single-column sheet = phone numbers only (name stays empty)
+    if (colCount <= 1) {
+      phoneIdx = 0;
+      nameIdx = -1;
+      startRow = looksLikePhone(header[0]) ? 0 : 1;
+    } else if (phoneIdx < 0) {
+      // No header match — assume col0=name, col1=phone (or col0=phone only)
       const first = String(rows[0][0] ?? '');
       const second = String(rows[0][1] ?? '');
-      const firstDigits = first.replace(/\D/g, '');
-      if (firstDigits.length >= 7) {
+      if (looksLikePhone(first) && !looksLikePhone(second)) {
         phoneIdx = 0;
         nameIdx = -1;
         startRow = 0;
-      } else if (String(second).replace(/\D/g, '').length >= 7) {
+      } else if (looksLikePhone(second)) {
         nameIdx = 0;
         phoneIdx = 1;
+        startRow = looksLikePhone(first) ? 0 : 1;
+      } else if (looksLikePhone(first)) {
+        phoneIdx = 0;
+        nameIdx = -1;
         startRow = 0;
       } else {
         nameIdx = 0;
-        phoneIdx = Math.min(1, header.length - 1);
+        phoneIdx = 1;
+        startRow = 1;
       }
     }
 
@@ -665,13 +703,11 @@
       const row = rows[i] || [];
       const phoneRaw = row[phoneIdx];
       if (phoneRaw === null || phoneRaw === undefined || phoneRaw === '') continue;
-      let number = String(phoneRaw).trim().replace(/[\s\-().]/g, '');
-      // Excel sometimes stores phones as numbers
-      if (/e\+/i.test(number)) number = Number(phoneRaw).toFixed(0);
-      const digits = number.replace(/\D/g, '');
-      if (digits.length < 7) continue;
+      const number = normalizeEthiopianMobile(phoneRaw);
+      if (!number) continue;
       if (seen.has(number)) continue;
       seen.add(number);
+      // Name optional — leave empty when missing (APK / pull may use phone as name)
       const name = nameIdx >= 0 ? String(row[nameIdx] ?? '').trim() : '';
       recipients.push({ recipientName: name, phoneNumber: number });
     }
@@ -739,7 +775,7 @@
     $('create-manual-contacts').value = '';
     $('create-manual-count').textContent = '0';
     $('create-excel-status').textContent =
-      'Columns: Name + Phone. File is applied when you create the group.';
+      'Excel: Phone only or Name + Phone. Ethio 09… / Safaricom 07… (or +251…). Empty name OK.';
     $('create-excel-status').className = 'text-xs text-slate-500';
     $('group-create-feedback').textContent = '';
     pendingCreateContacts = [];
@@ -1527,12 +1563,13 @@
     const feedback = $('edit-contact-feedback');
     const id = $('edit-contact-id')?.value;
     const name = $('edit-contact-name')?.value.trim();
-    const phoneNumber = $('edit-contact-phone')?.value.trim();
+    const phoneNumber = normalizeEthiopianMobile($('edit-contact-phone')?.value.trim());
     if (!id) return;
     if (!phoneNumber) {
       if (feedback) {
         feedback.className = 'text-sm text-danger';
-        feedback.textContent = 'Phone is required';
+        feedback.textContent =
+          'Invalid phone. Use Ethio 09XXXXXXXX or Safaricom 07XXXXXXXX (or +251…)';
       }
       return;
     }
@@ -1942,8 +1979,9 @@
         status.textContent = 'No valid phone numbers found in file.';
         return;
       }
+      const withName = pendingCreateContacts.filter((c) => c.name).length;
       status.className = 'text-xs text-ok';
-      status.textContent = `Ready: ${pendingCreateContacts.length} contacts from ${file.name}`;
+      status.textContent = `Ready: ${pendingCreateContacts.length} valid ET mobiles from ${file.name} (${withName} with name). Invalid/non-09/07 rows skipped.`;
     } catch (err) {
       status.className = 'text-xs text-danger';
       status.textContent = 'Failed to read file.';
@@ -2030,12 +2068,13 @@
   $('manual-add-btn').addEventListener('click', async () => {
     if (!selectedGroupId) return;
     const name = $('manual-name').value.trim();
-    const phoneNumber = $('manual-phone').value.trim();
+    const phoneNumber = normalizeEthiopianMobile($('manual-phone').value.trim());
     const feedback = $('group-import-feedback');
     feedback.textContent = '';
     if (!phoneNumber) {
       feedback.className = 'text-sm text-danger';
-      feedback.textContent = 'Phone is required';
+      feedback.textContent =
+        'Invalid phone. Use Ethio 09XXXXXXXX or Safaricom 07XXXXXXXX (or +251…)';
       return;
     }
     try {

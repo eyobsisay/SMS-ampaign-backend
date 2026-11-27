@@ -50,7 +50,8 @@ router.post('/register', (req, res) => {
 
 /**
  * GET /api/gateway/jobs?deviceIdentifier=...
- * Only returns QUEUED jobs for this company
+ * Returns QUEUED jobs for Active campaigns assigned to this device.
+ * Each job includes campaignId + campaignTitle (also as campaignName).
  */
 router.get('/jobs', (req, res) => {
   try {

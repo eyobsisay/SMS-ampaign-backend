@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const { newId, companyId, apiToken } = require('../utils/ids');
 const { hashPassword, verifyPassword } = require('../utils/passwords');
+const { normalizeEthiopianMobile } = require('../utils/phone');
 
 const dataDir = path.join(__dirname, '..', '..', 'data');
 if (!fs.existsSync(dataDir)) {
@@ -716,13 +717,14 @@ function importContactsToGroup(companyIdValue, groupId, contacts) {
 
   withTransaction(() => {
     for (const c of contacts) {
-      let phone = String(c.phoneNumber ?? c.phone ?? '').trim().replace(/[\s\-().]/g, '');
-      if (phone.includes(':')) phone = phone.split(':').pop();
-      const digits = phone.replace(/\D/g, '');
-      if (digits.length < 7) {
+      let rawPhone = String(c.phoneNumber ?? c.phone ?? '').trim();
+      if (rawPhone.includes(':')) rawPhone = rawPhone.split(':').pop().trim();
+      const normalized = normalizeEthiopianMobile(rawPhone);
+      if (!normalized.ok) {
         skipped += 1;
         continue;
       }
+      const phone = normalized.phone;
       const name = String(c.name ?? c.recipientName ?? '').trim();
       const result = insert.run(newId(), companyIdValue, groupId, name, phone);
       if (result.changes > 0) added += 1;
@@ -758,10 +760,9 @@ function updateContact(companyIdValue, contactId, { name, phoneNumber } = {}) {
 
   let nextPhone = existing.phoneNumber;
   if (phoneNumber !== undefined) {
-    nextPhone = String(phoneNumber || '')
-      .trim()
-      .replace(/[\s\-().]/g, '');
-    if (!nextPhone) throw new Error('phoneNumber is required');
+    const normalized = normalizeEthiopianMobile(phoneNumber);
+    if (!normalized.ok) throw new Error(normalized.error);
+    nextPhone = normalized.phone;
   }
 
   if (nextPhone !== existing.phoneNumber) {
@@ -939,9 +940,10 @@ function pullJobs(companyIdValue, deviceIdentifier, limit) {
   touchHeartbeat(deviceIdentifier, companyIdValue);
   const deviceId = String(deviceIdentifier || '').trim();
 
-  // Active campaigns only; unassigned (Any) OR assigned to this device.
+  // Active campaigns only; must be assigned to this device.
   const select = db.prepare(
-    `SELECT m.id, m.campaignId, m.recipientName, m.phoneNumber, m.body, m.priority, m.scheduledTime, m.preferredSim
+    `SELECT m.id, m.campaignId, c.title AS campaignTitle,
+            m.recipientName, m.phoneNumber, m.body, m.priority, m.scheduledTime, m.preferredSim
      FROM MessageJob m
      INNER JOIN Campaign c ON c.id = m.campaignId
      WHERE m.status = 'QUEUED'
@@ -978,7 +980,10 @@ function pullJobs(companyIdValue, deviceIdentifier, limit) {
         claimed.push({
           id: row.id,
           campaignId: row.campaignId,
-          recipientName: row.recipientName || '',
+          campaignTitle: row.campaignTitle || '',
+          campaignName: row.campaignTitle || '',
+          // Empty name → send phone so APK always has a display name
+          recipientName: String(row.recipientName || '').trim() || row.phoneNumber || '',
           phoneNumber: row.phoneNumber,
           body: row.body,
           priority: row.priority,
@@ -1188,7 +1193,9 @@ function createCampaign({
       deviceId
     );
     for (let i = 0; i < phones.length; i++) {
-      insertJob.run(newId(), companyIdValue, id, recipientNames[i] || '', phones[i], messageBody);
+      const phone = phones[i];
+      const name = String(recipientNames[i] || '').trim() || phone || '';
+      insertJob.run(newId(), companyIdValue, id, name, phone, messageBody);
     }
   });
 
@@ -1357,14 +1364,9 @@ function updateCampaign(
          VALUES (?, ?, ?, ?, ?, ?, 0, 'QUEUED')`
       );
       for (let i = 0; i < replacement.phones.length; i++) {
-        insertJob.run(
-          newId(),
-          companyIdValue,
-          campaignIdValue,
-          replacement.names[i] || '',
-          replacement.phones[i],
-          nextBody
-        );
+        const phone = replacement.phones[i];
+        const name = String(replacement.names[i] || '').trim() || phone || '';
+        insertJob.run(newId(), companyIdValue, campaignIdValue, name, phone, nextBody);
       }
       totalMessages = replacement.phones.length;
       replacedContacts = true;
