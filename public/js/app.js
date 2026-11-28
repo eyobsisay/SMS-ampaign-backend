@@ -322,7 +322,10 @@
       if (currentView === 'campaign-detail' && detailCampaignId) loadCampaignDetail();
       if (currentView === 'groups') loadGroups();
       if (currentView === 'monitor') loadMessages();
-      if (currentView === 'gateways') loadDevices();
+      if (currentView === 'gateways') {
+        loadDeviceTokens();
+        loadDevices();
+      }
       if (currentView === 'users') loadUsers();
       if (currentView === 'settings') loadSettings();
     }, 5000);
@@ -532,7 +535,10 @@
     }
     if (name === 'groups') loadGroups();
     if (name === 'monitor') loadMessages();
-    if (name === 'gateways') loadDevices();
+    if (name === 'gateways') {
+      loadDeviceTokens();
+      loadDevices();
+    }
     if (name === 'users') loadUsers();
     if (name === 'settings') loadSettings();
   }
@@ -977,7 +983,11 @@
     const origin = window.location.origin || 'https://sms.awedaybet.com';
     const baseUrl = `${origin.replace(/\/$/, '')}/api/gateway`;
     if ($('apk-setup-base-url')) $('apk-setup-base-url').textContent = baseUrl;
-    if ($('apk-setup-token')) $('apk-setup-token').textContent = companyApiToken || '—';
+    if ($('apk-setup-token')) {
+      $('apk-setup-token').textContent = companyApiToken
+        ? `Legacy company token (fallback only): ${companyApiToken}`
+        : 'Legacy company token (fallback only): —';
+    }
   }
 
   async function loadSettings() {
@@ -1379,6 +1389,48 @@
     }
   }
 
+  async function loadDeviceTokens() {
+    try {
+      const data = await api('/api/admin/device-tokens');
+      const tbody = $('device-tokens-tbody');
+      if (!tbody) return;
+      const tokens = data.tokens || [];
+      if (!tokens.length) {
+        tbody.innerHTML =
+          '<tr><td colspan="6" class="px-5 py-8 text-center text-slate-400">No device tokens yet. Create one per phone.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = tokens
+        .map((t) => {
+          const revoked = Boolean(t.revokedAt);
+          const bound = t.boundDeviceName || t.deviceIdentifier || '';
+          return `
+          <tr class="hover:bg-slate-50/80 ${revoked ? 'opacity-60' : ''}">
+            <td class="px-5 py-3 font-medium">${escapeHtml(t.label || 'Device')}</td>
+            <td class="px-5 py-3 font-mono text-[11px] break-all max-w-[220px]">${escapeHtml(t.token || '')}</td>
+            <td class="px-5 py-3 text-slate-500">${bound ? escapeHtml(bound) : '<span class="text-amber-700">Not registered yet</span>'}</td>
+            <td class="px-5 py-3 text-slate-500 whitespace-nowrap">${formatTime(t.createdAt)}</td>
+            <td class="px-5 py-3">
+              <span class="status-pill ${revoked ? 'bg-slate-100 text-slate-500' : bound ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-800'}">
+                ${revoked ? 'Revoked' : bound ? 'Bound' : 'Waiting'}
+              </span>
+            </td>
+            <td class="px-5 py-3 whitespace-nowrap">
+              <button type="button" class="text-accent text-xs font-medium hover:underline mr-2" data-copy-device-token="${escapeHtml(t.token || '')}">Copy</button>
+              ${
+                revoked
+                  ? ''
+                  : `<button type="button" class="text-danger text-xs font-medium hover:underline" data-revoke-device-token="${escapeHtml(t.id)}">Revoke</button>`
+              }
+            </td>
+          </tr>`;
+        })
+        .join('');
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
   async function loadDevices() {
     try {
       const data = await api('/api/admin/devices');
@@ -1395,9 +1447,12 @@
       tbody.innerHTML = data.devices
         .map((d) => {
           const online = isOnline(d.lastHeartbeat);
+          const label = d.deviceTokenLabel
+            ? `${d.deviceName || d.deviceIdentifier} · ${d.deviceTokenLabel}`
+            : d.deviceName || d.deviceIdentifier;
           return `
           <tr class="hover:bg-slate-50/80">
-            <td class="px-5 py-3 font-medium">${escapeHtml(d.deviceName)}</td>
+            <td class="px-5 py-3 font-medium">${escapeHtml(label)}</td>
             <td class="px-5 py-3 font-mono text-xs">${escapeHtml(d.deviceIdentifier)}</td>
             <td class="px-5 py-3 text-slate-500">${escapeHtml(d.androidVersion || '—')} / ${escapeHtml(d.appVersion || '—')}</td>
             <td class="px-5 py-3 text-slate-500 whitespace-nowrap">${formatTime(d.lastHeartbeat)}</td>
@@ -1755,20 +1810,20 @@
   $('copy-apk-setup')?.addEventListener('click', async () => {
     fillApkSetupCard();
     const baseUrl = $('apk-setup-base-url')?.textContent || '';
-    const token = companyApiToken || $('apk-setup-token')?.textContent || '';
     const text = [
       'Android app settings',
       `Server Base URL: ${baseUrl}`,
-      `API Token (Bearer): ${token}`,
+      'API Token: create one device token per phone under Gateways (do not share tokens)',
+      `Legacy company token (fallback only): ${companyApiToken || '—'}`,
       'Jobs Batch Size: 5–10 recommended (APK setting, max 50)',
       'Send delay: 2000 ms between SMS (APK setting)',
       '',
       'Steps:',
-      '1. Open APK Config screen',
-      '2. Set Server Base URL and API Token',
+      '1. Gateways → Create token (one per phone)',
+      '2. Open APK Config — paste Base URL + that phone’s device token',
       '3. Set batch size 5–10 and send delay 2000 ms',
       '4. Test & Register',
-      '5. Activate a campaign in the portal (defaults Inactive)',
+      '5. Assign that device on a campaign and Activate',
     ].join('\n');
     await copyText(text, 'Full Android setup copied.');
   });
@@ -2404,7 +2459,55 @@
 
   $('apply-filters').addEventListener('click', loadMessages);
   $('refresh-monitor').addEventListener('click', loadMessages);
-  $('refresh-gateways').addEventListener('click', loadDevices);
+  $('refresh-gateways').addEventListener('click', () => {
+    loadDeviceTokens();
+    loadDevices();
+  });
+
+  $('create-device-token-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const label = ($('device-token-label')?.value || '').trim() || 'Device';
+    try {
+      const data = await api('/api/admin/device-tokens', {
+        method: 'POST',
+        body: JSON.stringify({ label }),
+      });
+      if ($('device-token-label')) $('device-token-label').value = '';
+      await loadDeviceTokens();
+      await loadDevices();
+      const tok = data.token?.token || '';
+      await appAlert(
+        `Token for “${data.token?.label || label}”:\n\n${tok}\n\nPaste this only in one phone’s APK Config.`,
+        'Device token created'
+      );
+    } catch (err) {
+      await appAlert(err.message, 'Error');
+    }
+  });
+
+  $('device-tokens-tbody')?.addEventListener('click', async (e) => {
+    const copyBtn = e.target.closest('[data-copy-device-token]');
+    if (copyBtn) {
+      await copyText(copyBtn.getAttribute('data-copy-device-token') || '', 'Device token copied.');
+      return;
+    }
+    const revokeBtn = e.target.closest('[data-revoke-device-token]');
+    if (!revokeBtn) return;
+    const id = revokeBtn.getAttribute('data-revoke-device-token');
+    const ok = await appConfirm(
+      'Revoke this device token? That phone will stop connecting until you create a new token for it.',
+      'Revoke token',
+      { danger: true, confirmLabel: 'Revoke' }
+    );
+    if (!ok) return;
+    try {
+      await api(`/api/admin/device-tokens/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      await loadDeviceTokens();
+      await loadDevices();
+    } catch (err) {
+      await appAlert(err.message, 'Error');
+    }
+  });
   $('refresh-companies').addEventListener('click', loadCompanies);
   $('show-create-company')?.addEventListener('click', showCreateCompany);
   $('hide-create-company')?.addEventListener('click', hideCreateCompany);

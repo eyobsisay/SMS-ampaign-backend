@@ -1,4 +1,8 @@
-const { getCompanyByToken } = require('../db/database');
+const {
+  getCompanyByToken,
+  resolveAuthByToken,
+  touchDeviceTokenUsed,
+} = require('../db/database');
 
 function extractBearer(req) {
   const header = req.headers.authorization || '';
@@ -6,7 +10,10 @@ function extractBearer(req) {
   return match ? match[1].trim() : null;
 }
 
-/** Resolves Bearer token → company and attaches req.company */
+/**
+ * Resolves Bearer token → company (and optional per-device token).
+ * Device tokens and legacy company apiToken both work.
+ */
 function companyAuth(req, res, next) {
   const token = extractBearer(req);
   if (!token) {
@@ -16,15 +23,26 @@ function companyAuth(req, res, next) {
     });
   }
 
-  const company = getCompanyByToken(token);
-  if (!company) {
+  const resolved = resolveAuthByToken(token);
+  if (!resolved?.company) {
     return res.status(401).json({
       success: false,
       error: 'Invalid API token',
     });
   }
 
-  req.company = company;
+  req.company = resolved.company;
+  req.deviceToken = resolved.deviceToken || null;
+  if (req.deviceToken) {
+    // Device tokens are for /api/gateway only — not the dashboard admin API
+    if (String(req.originalUrl || req.url || '').includes('/api/admin')) {
+      return res.status(403).json({
+        success: false,
+        error: 'Device tokens cannot access the admin API. Use a company login session.',
+      });
+    }
+    touchDeviceTokenUsed(req.deviceToken.id);
+  }
   next();
 }
 
@@ -69,10 +87,14 @@ function masterOrCompanyAuth(req, res, next) {
     return next();
   }
 
-  const company = getCompanyByToken(token);
-  if (company) {
-    req.company = company;
+  const resolved = resolveAuthByToken(token);
+  if (resolved?.company) {
+    req.company = resolved.company;
+    req.deviceToken = resolved.deviceToken || null;
     req.isMaster = false;
+    if (req.deviceToken) {
+      touchDeviceTokenUsed(req.deviceToken.id);
+    }
     return next();
   }
 

@@ -10,6 +10,9 @@ const {
   listCampaigns,
   listMessages,
   listDevices,
+  createDeviceToken,
+  listDeviceTokens,
+  revokeDeviceToken,
   getCampaign,
   usersDictForCompany,
   listContactGroups,
@@ -515,6 +518,47 @@ router.get('/devices', (req, res) => {
   } catch (err) {
     console.error('devices error:', err);
     return res.status(500).json({ success: false, error: 'Failed to list devices' });
+  }
+});
+
+/** GET /api/admin/device-tokens — one token per Android device */
+router.get('/device-tokens', (req, res) => {
+  try {
+    const tokens = listDeviceTokens(req.company.id);
+    return res.json({ success: true, tokens });
+  } catch (err) {
+    console.error('list device-tokens error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to list device tokens' });
+  }
+});
+
+/**
+ * POST /api/admin/device-tokens
+ * Body: { label?: string }
+ * Creates a token that can bind to only one device.
+ */
+router.post('/device-tokens', (req, res) => {
+  try {
+    const label = (req.body && req.body.label) || 'Device';
+    const token = createDeviceToken(req.company.id, label);
+    return res.status(201).json({ success: true, token });
+  } catch (err) {
+    console.error('create device-token error:', err);
+    return res.status(500).json({ success: false, error: err.message || 'Failed to create token' });
+  }
+});
+
+/** DELETE /api/admin/device-tokens/:id — revoke (APK with this token stops) */
+router.delete('/device-tokens/:id', (req, res) => {
+  try {
+    const token = revokeDeviceToken(req.company.id, req.params.id);
+    if (!token) {
+      return res.status(404).json({ success: false, error: 'Device token not found' });
+    }
+    return res.json({ success: true, token });
+  } catch (err) {
+    console.error('revoke device-token error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to revoke token' });
   }
 });
 

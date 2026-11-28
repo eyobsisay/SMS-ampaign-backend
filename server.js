@@ -65,7 +65,7 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log(`SMS Campaign Portal running at http://localhost:${PORT}`);
-  console.log(`Gateway API:  /api/gateway  (company token)`);
+  console.log(`Gateway API:  /api/gateway  (device token or legacy company token)`);
   console.log(`Company API:  /api/admin    (company token)`);
   console.log(`Master API:   /api/master   (MASTER_ADMIN_TOKEN)`);
 });

@@ -748,12 +748,48 @@
         </div>
       </section>
 
-      <section id="view-gateways" class="view hidden">
+      <section id="view-gateways" class="view hidden space-y-4">
+        <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel overflow-hidden">
+          <div class="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 class="font-display font-semibold text-lg">Device tokens</h2>
+              <p class="text-sm text-slate-500">One token = one phone. Create a token per device so connecting a second phone does not replace the first.</p>
+            </div>
+            <form id="create-device-token-form" class="flex flex-wrap items-center gap-2">
+              <input
+                id="device-token-label"
+                type="text"
+                maxlength="80"
+                placeholder="Label (e.g. Phone 1)"
+                class="rounded-lg border border-slate-200 px-3 py-1.5 text-sm min-w-[160px]"
+              />
+              <button type="submit" class="rounded-lg bg-ink-900 text-white text-sm font-medium px-3 py-1.5 hover:bg-ink-800">
+                Create token
+              </button>
+            </form>
+          </div>
+          <div class="table-wrap">
+            <table class="w-full text-sm">
+              <thead class="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 sticky top-0">
+                <tr>
+                  <th class="px-5 py-3 font-medium">Label</th>
+                  <th class="px-5 py-3 font-medium">Token</th>
+                  <th class="px-5 py-3 font-medium">Bound device</th>
+                  <th class="px-5 py-3 font-medium">Created</th>
+                  <th class="px-5 py-3 font-medium">Status</th>
+                  <th class="px-5 py-3 font-medium">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="device-tokens-tbody" class="divide-y divide-slate-100"></tbody>
+            </table>
+          </div>
+        </div>
+
         <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel overflow-hidden">
           <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
             <div>
               <h2 class="font-display font-semibold text-lg">Connected Gateways</h2>
-              <p class="text-sm text-slate-500">Android devices registered with this company's token</p>
+              <p class="text-sm text-slate-500">Android devices that registered with a device token (or legacy company token)</p>
             </div>
             <button id="refresh-gateways" class="text-sm font-medium text-accent hover:text-accent-dark">Refresh</button>
           </div>
@@ -776,8 +812,8 @@
 
       <section id="view-users" class="view hidden space-y-4">
         <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel p-5">
-          <h2 class="font-display font-semibold text-lg">Android Gateway Token</h2>
-          <p class="mt-1 text-sm text-slate-500">Put this token in the Android app (Bearer). Dashboard uses username/password; the app uses this token.</p>
+          <h2 class="font-display font-semibold text-lg">Legacy company gateway token</h2>
+          <p class="mt-1 text-sm text-slate-500">Prefer <strong>Gateways → Device tokens</strong> (one token per phone). This shared company token can still work, but two phones using it may overwrite each other.</p>
           <p id="company-api-token" class="token-box mt-3 rounded-xl bg-slate-50 border border-slate-200 p-3 text-ink-900">—</p>
         </div>
         <div class="bg-white rounded-2xl border border-slate-200/80 shadow-panel overflow-hidden">
@@ -811,7 +847,7 @@
             </div>
             <div class="flex items-center gap-2">
               <button type="button" id="copy-apk-setup" class="rounded-lg border border-slate-200 text-xs font-medium px-2.5 py-1.5 hover:bg-slate-50">Copy setup</button>
-              <button type="button" id="regen-apk-token" class="rounded-lg border border-amber-200 text-amber-800 text-xs font-semibold px-2.5 py-1.5 hover:bg-amber-50">Regenerate token</button>
+              <button type="button" id="regen-apk-token" class="rounded-lg border border-amber-200 text-amber-800 text-xs font-semibold px-2.5 py-1.5 hover:bg-amber-50">Regenerate legacy token</button>
             </div>
           </div>
 
@@ -823,12 +859,10 @@
               </div>
               <p id="apk-setup-base-url" class="mt-0.5 font-mono text-xs text-ink-900 break-all">https://sms.awedaybet.com/api/gateway</p>
             </div>
-            <div class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-              <div class="flex items-center justify-between gap-2">
-                <p class="text-[10px] font-semibold uppercase tracking-wide text-slate-500">API Token (Bearer)</p>
-                <button type="button" data-copy-apk="token" class="text-xs font-medium text-accent hover:text-accent-dark">Copy</button>
-              </div>
-              <p id="apk-setup-token" class="mt-0.5 font-mono text-xs text-ink-900 break-all">—</p>
+            <div class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 sm:col-span-2">
+              <p class="text-[10px] font-semibold uppercase tracking-wide text-slate-500">API Token (Bearer)</p>
+              <p class="mt-0.5 text-xs text-ink-900">Create a <strong>device token</strong> under <strong>Gateways</strong> for each phone, then paste that token in the APK. Do not share one token across phones.</p>
+              <p id="apk-setup-token" class="mt-1 font-mono text-[11px] text-slate-500 break-all">Legacy company token (fallback only): —</p>
             </div>
             <div class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
               <p class="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Jobs Batch Size</p>
@@ -843,13 +877,13 @@
           <div class="mt-3 rounded-lg border border-teal-100 bg-teal-50/50 px-3 py-2 text-xs text-slate-700">
             <p class="font-semibold text-ink-900 mb-1">Instructions</p>
             <ol class="list-decimal pl-4 space-y-0.5">
-              <li>Open APK <strong>Config</strong>.</li>
-              <li>Paste <strong>Server Base URL</strong> and <strong>API Token</strong> from above.</li>
+              <li>Open <strong>Gateways</strong> → <strong>Create token</strong> (one per phone).</li>
+              <li>Open APK <strong>Config</strong> and paste <strong>Server Base URL</strong> + that phone’s <strong>device token</strong>.</li>
               <li>Set batch size <strong>5–10</strong> and send delay <strong>2000 ms</strong>.</li>
-              <li>Tap <strong>Test &amp; Register</strong> (device name is usually auto).</li>
-              <li>In portal: create campaign (defaults Inactive) → <strong>Activate</strong> to allow pulls.</li>
+              <li>Tap <strong>Test &amp; Register</strong>.</li>
+              <li>In portal: create campaign → assign that device → <strong>Activate</strong>.</li>
             </ol>
-            <p class="mt-1 text-[11px] text-slate-500">Only Active campaigns are pulled. Regenerate token → update APK (old token stops).</p>
+            <p class="mt-1 text-[11px] text-slate-500">Revoking a device token disconnects only that phone. Legacy company token regenerate still invalidates the shared fallback token.</p>
           </div>
 
           <form id="settings-form" class="mt-3 space-y-3 border-t border-slate-100 pt-3">
@@ -1182,7 +1216,7 @@
   </div>
 
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-  <script src="/js/app.js?v=camp-group-used-filter-2"></script>
+  <script src="/js/app.js?v=device-tokens-1"></script>
 </body>
 </html>
 

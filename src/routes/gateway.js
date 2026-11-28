@@ -7,15 +7,54 @@ const {
   touchHeartbeat,
   resolveJobBatchSize,
   MAX_JOB_BATCH_SIZE,
+  getDeviceTokenByToken,
 } = require('../db/database');
 const { gatewayId } = require('../utils/ids');
 
 const router = express.Router();
 
+function refreshDeviceToken(req) {
+  if (!req.deviceToken?.token) return req.deviceToken || null;
+  return getDeviceTokenByToken(req.deviceToken.token) || req.deviceToken;
+}
+
+/** Resolve which deviceIdentifier this request may act as. */
+function resolveGatewayDeviceIdentifier(req, requestedRaw) {
+  const deviceToken = refreshDeviceToken(req);
+  const requested = String(requestedRaw || '').trim();
+
+  if (deviceToken) {
+    if (!deviceToken.deviceIdentifier) {
+      return {
+        error: 'Register this device token first (POST /api/gateway/register)',
+        status: 400,
+      };
+    }
+    if (
+      deviceToken.clientDeviceIdentifier &&
+      requested &&
+      requested !== deviceToken.clientDeviceIdentifier &&
+      requested !== deviceToken.deviceIdentifier
+    ) {
+      return {
+        error:
+          'This token is bound to another device. Create a new device token for this phone.',
+        status: 403,
+      };
+    }
+    return { deviceIdentifier: deviceToken.deviceIdentifier, deviceToken };
+  }
+
+  if (!requested) {
+    return { error: 'deviceIdentifier is required', status: 400 };
+  }
+  return { deviceIdentifier: requested, deviceToken: null };
+}
+
 /**
  * POST /api/gateway/register
  * Body: { deviceIdentifier, deviceName, androidVersion, appVersion }
- * Auth: company Bearer token → device belongs to that company only
+ * Auth: device Bearer token (preferred) or legacy company token
  */
 router.post('/register', (req, res) => {
   try {
@@ -28,23 +67,29 @@ router.post('/register', (req, res) => {
       });
     }
 
-    const id = registerOrUpdateDevice({
+    const deviceToken = refreshDeviceToken(req);
+    const result = registerOrUpdateDevice({
       companyId: req.company.id,
       deviceIdentifier: String(deviceIdentifier).trim(),
       deviceName: String(deviceName).trim(),
       androidVersion,
       appVersion,
       gatewayId: gatewayId(),
+      deviceToken,
     });
 
     return res.json({
       success: true,
       message: 'Registered',
-      gatewayId: id,
+      gatewayId: result.gatewayId,
+      deviceIdentifier: result.deviceIdentifier,
+      boundToDeviceToken: Boolean(deviceToken),
     });
   } catch (err) {
-    console.error('register error:', err);
-    return res.status(500).json({ success: false, error: 'Registration failed' });
+    const msg = err.message || 'Registration failed';
+    const status = /already bound|another company|revoked/i.test(msg) ? 403 : 500;
+    if (status === 500) console.error('register error:', err);
+    return res.status(status).json({ success: false, error: msg });
   }
 });
 
@@ -55,21 +100,17 @@ router.post('/register', (req, res) => {
  */
 router.get('/jobs', (req, res) => {
   try {
-    const deviceIdentifier = (req.query.deviceIdentifier || '').trim();
-    if (!deviceIdentifier) {
-      return res.status(400).json({
-        success: false,
-        error: 'deviceIdentifier query parameter is required',
-      });
+    const resolved = resolveGatewayDeviceIdentifier(req, req.query.deviceIdentifier);
+    if (resolved.error) {
+      return res.status(resolved.status).json({ success: false, error: resolved.error });
     }
 
-    // Batch size comes from the APK (?limit=). Portal setting is fallback only.
     const requested = parseInt(req.query.limit, 10);
     const limit = Number.isFinite(requested)
       ? Math.min(Math.max(requested, 1), MAX_JOB_BATCH_SIZE)
       : resolveJobBatchSize(req.company);
 
-    const jobs = pullJobs(req.company.id, deviceIdentifier, limit);
+    const jobs = pullJobs(req.company.id, resolved.deviceIdentifier, limit);
 
     return res.json({
       success: true,
@@ -105,8 +146,12 @@ router.post('/status', (req, res) => {
       });
     }
 
-    if (deviceIdentifier) {
-      touchHeartbeat(String(deviceIdentifier).trim(), req.company.id);
+    if (deviceIdentifier || req.deviceToken) {
+      const resolved = resolveGatewayDeviceIdentifier(req, deviceIdentifier);
+      if (resolved.error) {
+        return res.status(resolved.status).json({ success: false, error: resolved.error });
+      }
+      touchHeartbeat(resolved.deviceIdentifier, req.company.id);
     }
 
     const result = updateMessageStatus({
@@ -145,8 +190,12 @@ router.post('/batch-sync', (req, res) => {
       });
     }
 
-    if (deviceIdentifier) {
-      touchHeartbeat(String(deviceIdentifier).trim(), req.company.id);
+    if (deviceIdentifier || req.deviceToken) {
+      const resolved = resolveGatewayDeviceIdentifier(req, deviceIdentifier);
+      if (resolved.error) {
+        return res.status(resolved.status).json({ success: false, error: resolved.error });
+      }
+      touchHeartbeat(resolved.deviceIdentifier, req.company.id);
     }
 
     const result = batchUpdateStatuses(req.company.id, events);
@@ -165,10 +214,11 @@ router.post('/batch-sync', (req, res) => {
 router.post('/heartbeat', (req, res) => {
   try {
     const { deviceIdentifier } = req.body || {};
-    if (!deviceIdentifier) {
-      return res.status(400).json({ success: false, error: 'deviceIdentifier is required' });
+    const resolved = resolveGatewayDeviceIdentifier(req, deviceIdentifier);
+    if (resolved.error) {
+      return res.status(resolved.status).json({ success: false, error: resolved.error });
     }
-    touchHeartbeat(String(deviceIdentifier).trim(), req.company.id);
+    touchHeartbeat(resolved.deviceIdentifier, req.company.id);
     return res.json({ success: true });
   } catch (err) {
     console.error('heartbeat error:', err);

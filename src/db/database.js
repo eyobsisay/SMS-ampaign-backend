@@ -118,8 +118,23 @@ ensureColumn('Company', 'isMasterWorkspace', 'INTEGER NOT NULL DEFAULT 0');
 ensureColumn('Campaign', 'status', "TEXT NOT NULL DEFAULT 'ACTIVE'");
 ensureColumn('Campaign', 'assignedDeviceIdentifier', 'TEXT');
 ensureColumn('Campaign', 'sourceGroupId', 'TEXT');
+ensureColumn('Device', 'clientDeviceIdentifier', 'TEXT');
 
 db.exec(`
+  CREATE TABLE IF NOT EXISTS DeviceToken (
+    id TEXT PRIMARY KEY,
+    companyId TEXT NOT NULL,
+    label TEXT NOT NULL,
+    token TEXT NOT NULL UNIQUE,
+    deviceId TEXT,
+    deviceIdentifier TEXT,
+    clientDeviceIdentifier TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    lastUsedAt TEXT,
+    revokedAt TEXT,
+    FOREIGN KEY (companyId) REFERENCES Company(id) ON DELETE CASCADE
+  );
+
   CREATE INDEX IF NOT EXISTS idx_user_company ON User(companyId);
   CREATE UNIQUE INDEX IF NOT EXISTS idx_user_username ON User(username);
   CREATE INDEX IF NOT EXISTS idx_device_company ON Device(companyId);
@@ -131,6 +146,8 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_messagejob_priority ON MessageJob(priority DESC, createdAt ASC);
   CREATE INDEX IF NOT EXISTS idx_device_identifier ON Device(deviceIdentifier);
   CREATE INDEX IF NOT EXISTS idx_company_token ON Company(apiToken);
+  CREATE INDEX IF NOT EXISTS idx_devicetoken_company ON DeviceToken(companyId);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_devicetoken_token ON DeviceToken(token);
   CREATE INDEX IF NOT EXISTS idx_contactgroup_company ON ContactGroup(companyId);
   CREATE INDEX IF NOT EXISTS idx_contact_group ON Contact(groupId);
   CREATE INDEX IF NOT EXISTS idx_contact_company ON Contact(companyId);
@@ -298,6 +315,99 @@ function loginWithPassword(username, password) {
 function getCompanyByToken(token) {
   if (!token) return null;
   return db.prepare('SELECT * FROM Company WHERE apiToken = ?').get(token) || null;
+}
+
+function getDeviceTokenByToken(token) {
+  if (!token) return null;
+  return (
+    db
+      .prepare(
+        `SELECT * FROM DeviceToken
+         WHERE token = ? AND revokedAt IS NULL`
+      )
+      .get(token) || null
+  );
+}
+
+/**
+ * Resolves Bearer token to company.
+ * Prefers per-device DeviceToken (one token = one device), then legacy company apiToken.
+ */
+function resolveAuthByToken(token) {
+  if (!token) return null;
+  const deviceToken = getDeviceTokenByToken(token);
+  if (deviceToken) {
+    const company = getCompanyById(deviceToken.companyId);
+    if (!company) return null;
+    return { company, deviceToken };
+  }
+  const company = getCompanyByToken(token);
+  if (!company) return null;
+  return { company, deviceToken: null };
+}
+
+function touchDeviceTokenUsed(deviceTokenId) {
+  if (!deviceTokenId) return;
+  db.prepare('UPDATE DeviceToken SET lastUsedAt = ? WHERE id = ?').run(
+    new Date().toISOString(),
+    deviceTokenId
+  );
+}
+
+function createDeviceToken(companyIdValue, label) {
+  const company = getCompanyById(companyIdValue);
+  if (!company) throw new Error('Company not found');
+  const name = String(label || '').trim() || 'Device';
+  const id = newId();
+  const token = apiToken();
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO DeviceToken (id, companyId, label, token, createdAt)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(id, companyIdValue, name, token, now);
+  return getDeviceTokenRow(companyIdValue, id);
+}
+
+function getDeviceTokenRow(companyIdValue, id) {
+  return (
+    db
+      .prepare(
+        `SELECT dt.*,
+          d.deviceName AS boundDeviceName,
+          d.lastHeartbeat AS boundLastHeartbeat
+         FROM DeviceToken dt
+         LEFT JOIN Device d ON d.id = dt.deviceId
+         WHERE dt.id = ? AND dt.companyId = ?`
+      )
+      .get(id, companyIdValue) || null
+  );
+}
+
+function listDeviceTokens(companyIdValue) {
+  return db
+    .prepare(
+      `SELECT dt.*,
+        d.deviceName AS boundDeviceName,
+        d.lastHeartbeat AS boundLastHeartbeat
+       FROM DeviceToken dt
+       LEFT JOIN Device d ON d.id = dt.deviceId
+       WHERE dt.companyId = ?
+       ORDER BY
+         CASE WHEN dt.revokedAt IS NULL THEN 0 ELSE 1 END,
+         dt.createdAt DESC`
+    )
+    .all(companyIdValue);
+}
+
+function revokeDeviceToken(companyIdValue, id) {
+  const row = getDeviceTokenRow(companyIdValue, id);
+  if (!row) return null;
+  if (row.revokedAt) return row;
+  const now = new Date().toISOString();
+  db.prepare(
+    'UPDATE DeviceToken SET revokedAt = ? WHERE id = ? AND companyId = ?'
+  ).run(now, id, companyIdValue);
+  return getDeviceTokenRow(companyIdValue, id);
 }
 
 function getCompanyById(id) {
@@ -1012,17 +1122,54 @@ function registerOrUpdateDevice({
   androidVersion,
   appVersion,
   gatewayId,
+  deviceToken = null,
 }) {
   const now = new Date().toISOString();
+  const clientIdentifier = String(deviceIdentifier || '').trim();
+  if (!clientIdentifier) {
+    throw new Error('deviceIdentifier is required');
+  }
+
+  let effectiveIdentifier = clientIdentifier;
+
+  if (deviceToken) {
+    if (deviceToken.companyId !== companyIdValue) {
+      throw new Error('Device token does not belong to this company');
+    }
+    if (deviceToken.revokedAt) {
+      throw new Error('Device token revoked');
+    }
+    if (deviceToken.deviceIdentifier) {
+      // Already bound: only the same phone (same client id) may reuse this token
+      if (
+        deviceToken.clientDeviceIdentifier &&
+        deviceToken.clientDeviceIdentifier !== clientIdentifier
+      ) {
+        throw new Error(
+          'This token is already bound to another device. Create a new device token for this phone.'
+        );
+      }
+      effectiveIdentifier = deviceToken.deviceIdentifier;
+    } else {
+      // First bind: stable id per token so two phones never overwrite each other
+      effectiveIdentifier = `dt_${deviceToken.id}`;
+    }
+  }
+
   const existing = db
     .prepare('SELECT * FROM Device WHERE deviceIdentifier = ?')
-    .get(deviceIdentifier);
+    .get(effectiveIdentifier);
+
+  let deviceRowId;
 
   if (existing) {
-    // Device moves to the company whose token was used to register
+    if (existing.companyId && existing.companyId !== companyIdValue) {
+      throw new Error('This device is registered to another company');
+    }
     db.prepare(
       `UPDATE Device
-       SET companyId = ?, deviceName = ?, androidVersion = ?, appVersion = ?, lastHeartbeat = ?
+       SET companyId = ?, deviceName = ?, androidVersion = ?, appVersion = ?,
+           lastHeartbeat = ?, clientDeviceIdentifier = ?
        WHERE deviceIdentifier = ?`
     ).run(
       companyIdValue,
@@ -1030,25 +1177,47 @@ function registerOrUpdateDevice({
       androidVersion || null,
       appVersion || null,
       now,
-      deviceIdentifier
+      clientIdentifier,
+      effectiveIdentifier
     );
-    return existing.id;
+    deviceRowId = existing.id;
+  } else {
+    db.prepare(
+      `INSERT INTO Device (
+         id, companyId, deviceIdentifier, deviceName, androidVersion, appVersion,
+         lastHeartbeat, clientDeviceIdentifier
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      gatewayId,
+      companyIdValue,
+      effectiveIdentifier,
+      deviceName,
+      androidVersion || null,
+      appVersion || null,
+      now,
+      clientIdentifier
+    );
+    deviceRowId = gatewayId;
   }
 
-  db.prepare(
-    `INSERT INTO Device (id, companyId, deviceIdentifier, deviceName, androidVersion, appVersion, lastHeartbeat)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    gatewayId,
-    companyIdValue,
-    deviceIdentifier,
-    deviceName,
-    androidVersion || null,
-    appVersion || null,
-    now
-  );
+  if (deviceToken && !deviceToken.deviceIdentifier) {
+    db.prepare(
+      `UPDATE DeviceToken
+       SET deviceId = ?, deviceIdentifier = ?, clientDeviceIdentifier = ?, lastUsedAt = ?
+       WHERE id = ? AND companyId = ? AND deviceIdentifier IS NULL AND revokedAt IS NULL`
+    ).run(
+      deviceRowId,
+      effectiveIdentifier,
+      clientIdentifier,
+      now,
+      deviceToken.id,
+      companyIdValue
+    );
+  } else if (deviceToken) {
+    touchDeviceTokenUsed(deviceToken.id);
+  }
 
-  return gatewayId;
+  return { gatewayId: deviceRowId, deviceIdentifier: effectiveIdentifier };
 }
 
 function touchHeartbeat(deviceIdentifier, companyIdValue) {
@@ -1682,7 +1851,20 @@ function listMessages({ companyId: companyIdValue, limit = 100, offset = 0, stat
 
 function listDevices(companyIdValue) {
   return db
-    .prepare('SELECT * FROM Device WHERE companyId = ? ORDER BY lastHeartbeat DESC')
+    .prepare(
+      `SELECT d.*,
+        (
+          SELECT dt.label FROM DeviceToken dt
+          WHERE dt.companyId = d.companyId
+            AND dt.deviceId = d.id
+            AND dt.revokedAt IS NULL
+          ORDER BY dt.createdAt DESC
+          LIMIT 1
+        ) AS deviceTokenLabel
+       FROM Device d
+       WHERE d.companyId = ?
+       ORDER BY d.lastHeartbeat DESC`
+    )
     .all(companyIdValue);
 }
 
@@ -1714,6 +1896,12 @@ module.exports = {
   resolveJobRecipientNameMode,
   updateCompanySettings,
   getCompanyByToken,
+  getDeviceTokenByToken,
+  resolveAuthByToken,
+  createDeviceToken,
+  listDeviceTokens,
+  revokeDeviceToken,
+  touchDeviceTokenUsed,
   getCompanyById,
   listCompanies,
   ensureMasterWorkspace,
